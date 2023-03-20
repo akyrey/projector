@@ -1,13 +1,18 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
-
-use serde::{Serialize, Deserialize};
-
-
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Data {
-    pub projector: HashMap<PathBuf, HashMap<String, String>>
+    pub projector: HashMap<PathBuf, HashMap<String, String>>,
+}
+
+impl Default for Data {
+    fn default() -> Self {
+        Self {
+            projector: HashMap::new(),
+        }
+    }
 }
 
 pub struct Projector {
@@ -16,15 +21,8 @@ pub struct Projector {
     data: Data,
 }
 
-fn default_data() -> Data {
-    return Data {
-        projector: HashMap::new(),
-    };
-}
-
 impl Projector {
     pub fn get_value_all(&self) -> HashMap<&String, &String> {
-
         let mut curr = Some(self.pwd.as_path());
         let mut paths = vec![];
         while let Some(p) = curr {
@@ -43,7 +41,6 @@ impl Projector {
     }
 
     pub fn get_value(&self, key: &str) -> Option<&String> {
-
         let mut curr = Some(self.pwd.as_path());
         let mut out = None;
 
@@ -61,18 +58,17 @@ impl Projector {
     }
 
     pub fn set_value(&mut self, key: String, value: String) {
-        self.data.projector
+        self.data
+            .projector
             .entry(self.pwd.clone())
             .or_default()
             .insert(key, value);
     }
 
     pub fn remove_value(&mut self, key: &str) {
-        self.data.projector
-            .get_mut(&self.pwd)
-            .map(|x| {
-                x.remove(key);
-            });
+        self.data.projector.get_mut(&self.pwd).map(|x| {
+            x.remove(key);
+        });
     }
 
     pub fn save(&self) -> Result<()> {
@@ -91,37 +87,26 @@ impl Projector {
     pub fn from_config(config: PathBuf, pwd: PathBuf) -> Self {
         if std::fs::metadata(&config).is_ok() {
             let contents = std::fs::read_to_string(&config);
-            let contents = contents.unwrap_or(
-                String::from("{\"projector\":{}}")
-            );
+            let contents = contents.unwrap_or(String::from("{\"projector\":{}}"));
             let data = serde_json::from_str(&contents);
-            let data = data.unwrap_or(default_data());
+            let data = data.unwrap_or(Default::default());
 
-            return Projector {
-                config,
-                pwd,
-                data,
-            }
+            return Projector { config, pwd, data };
         }
 
         return Projector {
             config,
             pwd,
-            data: default_data(),
-        }
+            data: Default::default(),
+        };
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::{path::PathBuf, collections::HashMap};
-
+    use super::{Data, Projector};
     use collection_macros::hashmap;
-
-    
-
-    use super::{Projector, Data};
-
+    use std::{collections::HashMap, path::PathBuf};
 
     fn get_data() -> HashMap<PathBuf, HashMap<String, String>> {
         return hashmap! {
@@ -143,9 +128,9 @@ mod test {
             config: PathBuf::from(""),
             pwd,
             data: Data {
-                projector: get_data()
-            }
-        }
+                projector: get_data(),
+            },
+        };
     }
 
     #[test]
@@ -162,7 +147,10 @@ mod test {
         proj.set_value(String::from("fem"), String::from("is_better_than_great"));
 
         assert_eq!(proj.get_value("foo"), Some(&String::from("bar4")));
-        assert_eq!(proj.get_value("fem"), Some(&String::from("is_better_than_great")));
+        assert_eq!(
+            proj.get_value("fem"),
+            Some(&String::from("is_better_than_great"))
+        );
     }
 
     #[test]
@@ -174,6 +162,4 @@ mod test {
         assert_eq!(proj.get_value("foo"), Some(&String::from("bar2")));
         assert_eq!(proj.get_value("fem"), Some(&String::from("is_great")));
     }
-
 }
-

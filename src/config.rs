@@ -1,8 +1,6 @@
-use std::path::PathBuf;
-
-use anyhow::{Result, anyhow, Context};
-
 use crate::opts::Opts;
+use anyhow::{anyhow, Context, Result};
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct Config {
@@ -46,21 +44,26 @@ impl TryFrom<Vec<String>> for Operation {
         let term = value.get(0).expect("expect to exist");
         if term == "add" {
             if value.len() != 3 {
-                let err = anyhow!("operation add expects 2 arguments but got {}", value.len() - 1);
+                let err = anyhow!(
+                    "operation add expects 2 arguments but got {}",
+                    value.len() - 1
+                );
                 return Err(err);
             }
 
             let mut drain = value.drain(1..=2);
-            return Ok(
-                Operation::Add(
-                    drain.next().expect("to exist"),
-                    drain.next().expect("to exist"),
-                ));
+            return Ok(Operation::Add(
+                drain.next().expect("to exist"),
+                drain.next().expect("to exist"),
+            ));
         }
 
         if term == "rm" {
             if value.len() != 2 {
-                let err = anyhow!("operation remove expects 1 arguments but got {}", value.len() - 1);
+                let err = anyhow!(
+                    "operation remove expects 1 arguments but got {}",
+                    value.len() - 1
+                );
                 return Err(err);
             }
 
@@ -69,7 +72,10 @@ impl TryFrom<Vec<String>> for Operation {
         }
 
         if value.len() > 1 {
-            let err = anyhow!("operation print expects 0 or 1 arguments but got {}", value.len());
+            let err = anyhow!(
+                "operation print expects 0 or 1 arguments but got {}",
+                value.len()
+            );
             return Err(err);
         }
         let arg = value.pop().expect("to exist");
@@ -82,8 +88,7 @@ fn get_config(config: Option<PathBuf>) -> Result<PathBuf> {
         return Ok(v);
     }
 
-    let loc = std::env::var("XDG_CONFIG_HOME")
-        .context("unable to get XDG_CONFIG_HOME")?;
+    let loc = std::env::var("XDG_CONFIG_HOME").context("unable to get XDG_CONFIG_HOME")?;
 
     let mut loc = PathBuf::from(loc);
 
@@ -103,12 +108,9 @@ fn get_pwd(pwd: Option<PathBuf>) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod test {
-    use anyhow::Result;
-
-    use crate::{opts::Opts, config::Operation};
-
     use super::Config;
-
+    use crate::{config::Operation, opts::Opts};
+    use anyhow::Result;
 
     #[test]
     fn test_print_all() -> Result<()> {
@@ -116,7 +118,8 @@ mod test {
             args: vec![],
             pwd: None,
             config: None,
-        }.try_into()?;
+        }
+        .try_into()?;
 
         assert_eq!(opts.operation, Operation::Print(None));
         return Ok(());
@@ -125,12 +128,11 @@ mod test {
     #[test]
     fn test_print_key() -> Result<()> {
         let opts: Config = Opts {
-            args: vec![
-                String::from("foo")
-            ],
+            args: vec![String::from("foo")],
             pwd: None,
             config: None,
-        }.try_into()?;
+        }
+        .try_into()?;
 
         assert_eq!(opts.operation, Operation::Print(Some(String::from("foo"))));
         return Ok(());
@@ -146,11 +148,13 @@ mod test {
             ],
             pwd: None,
             config: None,
-        }.try_into()?;
+        }
+        .try_into()?;
 
-        assert_eq!(opts.operation, Operation::Add(
-                String::from("foo"),
-                String::from("bar")));
+        assert_eq!(
+            opts.operation,
+            Operation::Add(String::from("foo"), String::from("bar"))
+        );
 
         return Ok(());
     }
@@ -158,18 +162,14 @@ mod test {
     #[test]
     fn test_remove_key() -> Result<()> {
         let opts: Config = Opts {
-            args: vec![
-                String::from("rm"),
-                String::from("foo"),
-            ],
+            args: vec![String::from("rm"), String::from("foo")],
             pwd: None,
             config: None,
-        }.try_into()?;
+        }
+        .try_into()?;
 
-        assert_eq!(opts.operation, Operation::Remove(
-                String::from("foo")));
+        assert_eq!(opts.operation, Operation::Remove(String::from("foo")));
 
         return Ok(());
     }
 }
-

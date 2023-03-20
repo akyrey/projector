@@ -13,4 +13,3 @@ pub struct Opts {
     #[clap(short = 'p', long = "pwd")]
     pub pwd: Option<PathBuf>,
 }
-
