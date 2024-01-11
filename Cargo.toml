@@ -1,6 +1,7 @@
 [package]
-name = "rust"
+name = "projector"
 version = "0.1.0"
+authors = ["ThePrimeagen", "Dario Vogogna <stein.dario@gmail.com>"]
 edition = "2021"
 
 [profile.release]

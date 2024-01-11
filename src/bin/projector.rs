@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use rust::{
+use projector::{
     config::{Config, Operation},
     opts::Opts,
     projector::Projector,
