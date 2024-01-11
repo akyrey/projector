@@ -17,11 +17,11 @@ impl TryFrom<Opts> for Config {
         let config = get_config(value.config)?;
         let pwd = get_pwd(value.pwd)?;
 
-        return Ok(Config {
+        Ok(Config {
             operation,
             config,
             pwd,
-        });
+        })
     }
 }
 
@@ -37,11 +37,11 @@ impl TryFrom<Vec<String>> for Operation {
 
     fn try_from(value: Vec<String>) -> Result<Self> {
         let mut value = value;
-        if value.len() == 0 {
+        if value.is_empty() {
             return Ok(Operation::Print(None));
         }
 
-        let term = value.get(0).expect("expect to exist");
+        let term = value.first().expect("expect to exist");
         if term == "add" {
             if value.len() != 3 {
                 let err = anyhow!(
@@ -79,7 +79,8 @@ impl TryFrom<Vec<String>> for Operation {
             return Err(err);
         }
         let arg = value.pop().expect("to exist");
-        return Ok(Operation::Print(Some(arg)));
+
+        Ok(Operation::Print(Some(arg)))
     }
 }
 
@@ -95,7 +96,7 @@ fn get_config(config: Option<PathBuf>) -> Result<PathBuf> {
     loc.push("projector");
     loc.push("projector.json");
 
-    return Ok(loc);
+    Ok(loc)
 }
 
 fn get_pwd(pwd: Option<PathBuf>) -> Result<PathBuf> {
@@ -103,7 +104,7 @@ fn get_pwd(pwd: Option<PathBuf>) -> Result<PathBuf> {
         return Ok(pwd);
     }
 
-    return Ok(std::env::current_dir().context("errored getting current_dir")?);
+    std::env::current_dir().context("errored getting current_dir")
 }
 
 #[cfg(test)]

@@ -17,9 +17,9 @@ fn main() -> Result<()> {
             println!("{}", value);
         }
         Operation::Print(Some(k)) => {
-            proj.get_value(&k).map(|x| {
-                println!("{}", x);
-            });
+            if let Some(x) = proj.get_value(&k) {
+                println!("{}", x)
+            };
         }
         Operation::Add(k, v) => {
             proj.set_value(k, v);
@@ -31,5 +31,5 @@ fn main() -> Result<()> {
         }
     }
 
-    return Ok(());
+    Ok(())
 }

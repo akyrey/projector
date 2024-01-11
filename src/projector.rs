@@ -2,17 +2,9 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct Data {
     pub projector: HashMap<PathBuf, HashMap<String, String>>,
-}
-
-impl Default for Data {
-    fn default() -> Self {
-        Self {
-            projector: HashMap::new(),
-        }
-    }
 }
 
 pub struct Projector {
@@ -37,7 +29,7 @@ impl Projector {
             }
         }
 
-        return out;
+        out
     }
 
     pub fn get_value(&self, key: &str) -> Option<&String> {
@@ -54,7 +46,7 @@ impl Projector {
             curr = p.parent()
         }
 
-        return out;
+        out
     }
 
     pub fn set_value(&mut self, key: String, value: String) {
@@ -66,14 +58,14 @@ impl Projector {
     }
 
     pub fn remove_value(&mut self, key: &str) {
-        self.data.projector.get_mut(&self.pwd).map(|x| {
+        if let Some(x) = self.data.projector.get_mut(&self.pwd) {
             x.remove(key);
-        });
+        };
     }
 
     pub fn save(&self) -> Result<()> {
         if let Some(p) = self.config.parent() {
-            if !std::fs::metadata(&p).is_ok() {
+            if std::fs::metadata(p).is_err() {
                 std::fs::create_dir_all(p)?;
             }
         }
@@ -81,7 +73,7 @@ impl Projector {
         let contents = serde_json::to_string(&self.data)?;
         std::fs::write(&self.config, contents)?;
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn from_config(config: PathBuf, pwd: PathBuf) -> Self {
@@ -94,11 +86,11 @@ impl Projector {
             return Projector { config, pwd, data };
         }
 
-        return Projector {
+        Projector {
             config,
             pwd,
             data: Default::default(),
-        };
+        }
     }
 }
 
