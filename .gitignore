@@ -1,0 +1,22 @@
+# Build output
+bin/
+dist/
+
+# Go
+*.test
+*.out
+coverage.out
+
+# goreleaser
+/dist/
+
+# Editor directories
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

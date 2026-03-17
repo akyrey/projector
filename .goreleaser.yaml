@@ -1,0 +1,100 @@
+# .goreleaser.yaml — release configuration for projector.
+# Run: goreleaser release --clean
+# Dry-run: goreleaser release --snapshot --clean
+version: 2
+
+project_name: projector
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod verify
+
+builds:
+  - id: projector
+    main: ./cmd/projector
+    binary: projector
+    # Embed version at build time via the same ldflags used in the Makefile.
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Exclude windows/arm64 — not yet mainstream enough to warrant testing.
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: projector
+    builds:
+      - projector
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: "New Features"
+      regexp: "^feat"
+      order: 0
+    - title: "Bug Fixes"
+      regexp: "^fix"
+      order: 1
+    - title: "Other Changes"
+      order: 999
+
+release:
+  github:
+    owner: akyrey
+    name: projector
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+
+brews:
+  - name: projector
+    homepage: https://github.com/akyrey/projector
+    description: "Run project commands across multiple directories"
+    license: MIT
+    repository:
+      owner: akyrey
+      name: homebrew-tap
+      branch: main
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    directory: Formula
+    install: |
+      bin.install "projector"
+    test: |
+      system "#{bin}/projector", "--version"
