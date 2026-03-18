@@ -209,3 +209,77 @@ func TestGlobalConfigPath(t *testing.T) {
 		t.Errorf("got %q, want %q", path, want)
 	}
 }
+
+// TestLoad_AliasExpansion verifies that commands with aliases are reachable
+// via the alias name after merging.
+func TestLoad_AliasExpansion(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+
+	writeConfig(t, filepath.Join(dir, config.LocalConfigName), &config.Config{
+		Commands: map[string]config.Command{
+			"build": {
+				Cmd:     "go build ./...",
+				Aliases: []string{"b", "compile"},
+			},
+		},
+	})
+
+	loader := config.NewLoaderWithGlobal(globalPath)
+	merged, err := loader.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Original name must still be present.
+	if _, ok := merged.Commands["build"]; !ok {
+		t.Error("expected 'build' command in merged config")
+	}
+
+	// Each alias must resolve to the same shell command.
+	for _, alias := range []string{"b", "compile"} {
+		cmd, ok := merged.Commands[alias]
+		if !ok {
+			t.Errorf("expected alias %q in merged config", alias)
+			continue
+		}
+		if cmd.Cmd != "go build ./..." {
+			t.Errorf("alias %q: want cmd %q, got %q", alias, "go build ./...", cmd.Cmd)
+		}
+		// Aliases of aliases must not be expanded (Aliases field should be nil).
+		if len(cmd.Aliases) != 0 {
+			t.Errorf("alias %q: expected Aliases to be cleared, got %v", alias, cmd.Aliases)
+		}
+	}
+}
+
+// TestLoad_AliasSelfSkipped verifies that a self-alias does not cause duplication.
+func TestLoad_AliasSelfSkipped(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+
+	writeConfig(t, filepath.Join(dir, config.LocalConfigName), &config.Config{
+		Commands: map[string]config.Command{
+			"start": {
+				Cmd:     "echo start",
+				Aliases: []string{"start"}, // self-alias, should be ignored
+			},
+		},
+	})
+
+	loader := config.NewLoaderWithGlobal(globalPath)
+	merged, err := loader.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// 'start' should appear exactly once (with its Aliases intact).
+	cmd := merged.Commands["start"]
+	if cmd.Cmd != "echo start" {
+		t.Errorf("start: got cmd %q", cmd.Cmd)
+	}
+	// Only 'start' itself should be in the map — self-alias doesn't create extra entry.
+	if len(merged.Commands) != 1 {
+		t.Errorf("expected 1 command, got %d: %v", len(merged.Commands), merged.Commands)
+	}
+}

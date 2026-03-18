@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 
 	"golang.org/x/sync/errgroup"
@@ -27,6 +28,13 @@ type Target struct {
 
 	// Command is the resolved command definition to execute.
 	Command config.Command
+
+	// ExtraArgs are additional arguments appended to Command.Cmd at runtime.
+	// They are shell-quoted and joined with a space before appending.
+	ExtraArgs []string
+
+	// DryRun, when true, prints what would be executed without actually running.
+	DryRun bool
 }
 
 // Runner executes commands, handling both single and multi-target scenarios.
@@ -64,7 +72,7 @@ func (r *Runner) RunWithDeps(ctx context.Context, t Target, commands map[string]
 	}
 
 	// Run each step in order; the last entry is always t itself.
-	for _, name := range order {
+	for i, name := range order {
 		cmd, ok := commands[name]
 		if !ok {
 			return fmt.Errorf("command %q not found in context", name)
@@ -74,6 +82,12 @@ func (r *Runner) RunWithDeps(ctx context.Context, t Target, commands map[string]
 			Name:    name,
 			Dir:     t.Dir,
 			Command: cmd,
+			DryRun:  t.DryRun,
+		}
+
+		// Extra args only apply to the root command (last in topo order), not deps.
+		if i == len(order)-1 {
+			step.ExtraArgs = t.ExtraArgs
 		}
 
 		if err := r.runTarget(ctx, step, r.stdout, r.stderr); err != nil {
@@ -173,21 +187,69 @@ func (r *Runner) RunConcurrent(ctx context.Context, targets []Target) error {
 }
 
 // runTarget executes a single target, writing stdout to outW and stderr to errW.
+// If t.DryRun is true the command is printed but not executed.
 func (r *Runner) runTarget(ctx context.Context, t Target, outW, errW io.Writer) error {
 	shell, flag := shellAndFlag()
-	cmd := exec.CommandContext(ctx, shell, flag, t.Command.Cmd)
+
+	// Build the final shell command string. Extra args are appended verbatim
+	// after the configured command, separated by a space.
+	shellCmd := t.Command.Cmd
+	if len(t.ExtraArgs) > 0 {
+		shellCmd = shellCmd + " " + strings.Join(t.ExtraArgs, " ")
+	}
+
+	// Build env: process env → .env file → command-specific vars (highest priority).
+	// We build this before checking preconditions so they share the same env.
+	baseEnv := os.Environ()
+
+	// Load .env from the target directory; missing file is silently skipped.
+	dotEnv, err := config.LoadDotEnv(t.Dir)
+	if err != nil {
+		return fmt.Errorf("load .env: %w", err)
+	}
+	for k, v := range dotEnv {
+		baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	// Command-specific env overrides .env values.
+	for k, v := range t.Command.Env {
+		baseEnv = append(baseEnv, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	label := t.Name
+	if label == "" {
+		label = t.Dir
+	}
+
+	if t.DryRun {
+		// Print preconditions and the command; don't execute anything.
+		for _, pre := range t.Command.Preconditions {
+			fmt.Fprintf(outW, "[dry-run] %s: precondition: %s %s %q\n", label, shell, flag, pre)
+		}
+		fmt.Fprintf(outW, "[dry-run] %s: %s %s %q\n", label, shell, flag, shellCmd)
+		return nil
+	}
+
+	// Check preconditions before running the command.
+	for _, pre := range t.Command.Preconditions {
+		preCmd := exec.CommandContext(ctx, shell, flag, pre)
+		preCmd.Dir = t.Dir
+		preCmd.Env = baseEnv
+		// Precondition output goes to stderr so it doesn't pollute stdout.
+		preCmd.Stderr = errW
+		if err := preCmd.Run(); err != nil {
+			return fmt.Errorf("precondition %q failed for %q: %w", pre, t.Name, err)
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, shell, flag, shellCmd)
 	cmd.Dir = t.Dir
 	cmd.Stdout = outW
 	cmd.Stderr = errW
-
-	// Apply base environment then overlay command-specific vars.
-	cmd.Env = os.Environ()
-	for k, v := range t.Command.Env {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
-	}
+	cmd.Env = baseEnv
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("command %q failed: %w", t.Command.Cmd, err)
+		return fmt.Errorf("command %q failed: %w", shellCmd, err)
 	}
 
 	return nil

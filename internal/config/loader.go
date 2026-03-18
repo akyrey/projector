@@ -159,6 +159,8 @@ func dirChain(pwd string) ([]string, error) {
 
 // mergeInto applies src on top of dst.
 // Commands and projects from src override those in dst with the same key.
+// For each command that declares aliases, each alias is also registered in dst
+// pointing to the same definition (with Aliases cleared to avoid confusion).
 func mergeInto(dst *MergedConfig, src *Config) {
 	if src == nil {
 		return
@@ -170,6 +172,16 @@ func mergeInto(dst *MergedConfig, src *Config) {
 
 	for name, cmd := range src.Commands {
 		dst.Commands[name] = cmd
+
+		// Register each alias as its own entry so `projector run <alias>` works.
+		for _, alias := range cmd.Aliases {
+			if alias == name {
+				continue // skip self-alias
+			}
+			aliasCmd := cmd
+			aliasCmd.Aliases = nil // aliases of aliases are not expanded
+			dst.Commands[alias] = aliasCmd
+		}
 	}
 }
 

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -70,10 +72,12 @@ Examples:
 // newConfigSetCmd sets a command in the config.
 func newConfigSetCmd(d *deps) *cobra.Command {
 	var (
-		global      bool
-		description string
-		envPairs    []string
-		dependsOn   []string
+		global        bool
+		description   string
+		envPairs      []string
+		dependsOn     []string
+		aliases       []string
+		preconditions []string
 	)
 
 	cmd := &cobra.Command{
@@ -85,6 +89,7 @@ Examples:
   projector config set start "docker compose up -d"
   projector config set start "sail up -d" --description "Start Laravel project"
   projector config set start "sail up -d" --env SAIL_XDEBUG=1 --env APP_ENV=local
+  projector config set build "go build ./..." --alias b
   projector config set start "sail up -d" --global`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -97,10 +102,12 @@ Examples:
 			}
 
 			definition := config.Command{
-				Cmd:         shellCmd,
-				Description: description,
-				Env:         env,
-				DependsOn:   dependsOn,
+				Cmd:           shellCmd,
+				Description:   description,
+				Env:           env,
+				DependsOn:     dependsOn,
+				Aliases:       aliases,
+				Preconditions: preconditions,
 			}
 
 			if err := setCommand(d, global, name, definition); err != nil {
@@ -120,6 +127,8 @@ Examples:
 	cmd.Flags().StringVarP(&description, "description", "d", "", "human-readable description")
 	cmd.Flags().StringArrayVarP(&envPairs, "env", "e", nil, "environment variable in KEY=VALUE format (repeatable)")
 	cmd.Flags().StringArrayVar(&dependsOn, "depends-on", nil, "command names that must run first (repeatable)")
+	cmd.Flags().StringArrayVar(&aliases, "alias", nil, "alternative name for this command (repeatable)")
+	cmd.Flags().StringArrayVar(&preconditions, "precondition", nil, "shell expression that must exit 0 before running (repeatable)")
 
 	return cmd
 }
@@ -274,7 +283,14 @@ func setCommand(d *deps, global bool, name string, cmd config.Command) error {
 }
 
 // ensureConfigExists creates the config file with a starter skeleton if absent.
+// If the file already exists it is left untouched.
 func ensureConfigExists(path string, global bool) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil // File already exists; don't overwrite.
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat config file: %w", err)
+	}
+
 	var skeleton config.Config
 
 	if global {

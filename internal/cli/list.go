@@ -50,6 +50,9 @@ Example:
 				} else {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n", name, c.Cmd)
 				}
+				if len(c.Aliases) > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "    aliases: %v\n", c.Aliases)
+				}
 				if len(c.Env) > 0 {
 					envKeys := make([]string, 0, len(c.Env))
 					for k := range c.Env {
@@ -58,6 +61,11 @@ Example:
 					sort.Strings(envKeys)
 					for _, k := range envKeys {
 						fmt.Fprintf(cmd.OutOrStdout(), "    env: %s=%s\n", k, c.Env[k])
+					}
+				}
+				if len(c.Preconditions) > 0 {
+					for _, pre := range c.Preconditions {
+						fmt.Fprintf(cmd.OutOrStdout(), "    precondition: %s\n", pre)
 					}
 				}
 				if len(c.DependsOn) > 0 {

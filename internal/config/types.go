@@ -15,6 +15,14 @@ type Command struct {
 
 	// DependsOn lists other command names that must complete before this one runs.
 	DependsOn []string `yaml:"depends_on,omitempty"`
+
+	// Aliases lists alternative names that resolve to this command.
+	// Each alias is registered as a separate entry in the merged command map.
+	Aliases []string `yaml:"aliases,omitempty"`
+
+	// Preconditions is a list of shell expressions that must all exit 0 before
+	// this command runs. If any fails, execution is aborted with an error.
+	Preconditions []string `yaml:"preconditions,omitempty"`
 }
 
 // Project represents a registered named project with a filesystem path.
