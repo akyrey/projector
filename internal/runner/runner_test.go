@@ -14,7 +14,7 @@ import (
 // TestRunner_Run_Success verifies a simple command produces output.
 func TestRunner_Run_Success(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	tgt := runner.Target{
 		Name: "test",
@@ -36,7 +36,7 @@ func TestRunner_Run_Success(t *testing.T) {
 // TestRunner_Run_Failure returns an error when the command exits non-zero.
 func TestRunner_Run_Failure(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	tgt := runner.Target{
 		Name: "failing",
@@ -54,7 +54,7 @@ func TestRunner_Run_Failure(t *testing.T) {
 // TestRunner_Run_EnvVar verifies that Env map entries are passed to the subprocess.
 func TestRunner_Run_EnvVar(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	tgt := runner.Target{
 		Name: "env-test",
@@ -79,7 +79,7 @@ func TestRunner_Run_EnvVar(t *testing.T) {
 // TestRunner_Run_DryRun verifies that dry-run prints the command without executing.
 func TestRunner_Run_DryRun(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	tgt := runner.Target{
 		Name: "dry-test",
@@ -109,7 +109,7 @@ func TestRunner_Run_DryRun(t *testing.T) {
 // TestRunner_RunConcurrent_AllSucceed runs multiple targets and checks all outputs appear.
 func TestRunner_RunConcurrent_AllSucceed(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	targets := []runner.Target{
 		{Name: "alpha", Dir: t.TempDir(), Command: config.Command{Cmd: "echo alpha-output"}},
@@ -132,7 +132,7 @@ func TestRunner_RunConcurrent_AllSucceed(t *testing.T) {
 // TestRunner_RunConcurrent_OneFailure returns an error if any target fails.
 func TestRunner_RunConcurrent_OneFailure(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	targets := []runner.Target{
 		{Name: "ok", Dir: t.TempDir(), Command: config.Command{Cmd: "echo ok"}},
@@ -147,7 +147,7 @@ func TestRunner_RunConcurrent_OneFailure(t *testing.T) {
 // TestRunner_RunConcurrent_SingleTarget skips prefixes (delegates to Run).
 func TestRunner_RunConcurrent_SingleTarget(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	targets := []runner.Target{
 		{Name: "solo", Dir: t.TempDir(), Command: config.Command{Cmd: "echo solo-output"}},
@@ -174,7 +174,7 @@ func TestRunner_Run_DotEnvLoaded(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	tgt := runner.Target{
 		Name: "dotenv-test",
@@ -202,7 +202,7 @@ func TestRunner_Run_CommandEnvOverridesDotEnv(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	tgt := runner.Target{
 		Name: "override-test",
@@ -229,7 +229,7 @@ func TestRunner_Run_CommandEnvOverridesDotEnv(t *testing.T) {
 // TestRunner_Run_PreconditionPass verifies the command runs when precondition exits 0.
 func TestRunner_Run_PreconditionPass(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	tgt := runner.Target{
 		Name: "pre-pass",
@@ -251,7 +251,7 @@ func TestRunner_Run_PreconditionPass(t *testing.T) {
 // TestRunner_Run_PreconditionFail verifies the command is blocked when precondition exits non-zero.
 func TestRunner_Run_PreconditionFail(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	tgt := runner.Target{
 		Name: "pre-fail",
@@ -274,7 +274,7 @@ func TestRunner_Run_PreconditionFail(t *testing.T) {
 // TestRunner_Run_ExtraArgs verifies extra args are appended to the shell command.
 func TestRunner_Run_ExtraArgs(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	tgt := runner.Target{
 		Name: "extra-args-test",
@@ -301,7 +301,7 @@ func TestRunner_Run_ExtraArgsNotPassedToDeps(t *testing.T) {
 	markerFile := tmpDir + "/dep-args.txt"
 
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	commands := map[string]config.Command{
 		"dep": {Cmd: "echo dep-ran > " + markerFile},
@@ -336,7 +336,7 @@ func TestRunner_Run_ExtraArgsNotPassedToDeps(t *testing.T) {
 // TestRunner_RunConcurrent_Prefixes verifies output lines are prefixed with project names.
 func TestRunner_RunConcurrent_Prefixes(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	targets := []runner.Target{
 		{Name: "proj-a", Dir: t.TempDir(), Command: config.Command{Cmd: "echo line-a"}},

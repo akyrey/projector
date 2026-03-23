@@ -56,28 +56,41 @@ application code (not intended to be imported by external packages).
 type Config struct {
     Projects map[string]Project `yaml:"projects,omitempty"` // global only
     Commands map[string]Command `yaml:"commands,omitempty"`
+    Services map[string]Service `yaml:"services,omitempty"`
 }
 
 type Command struct {
-    Cmd         string            `yaml:"cmd"`
-    Description string            `yaml:"description,omitempty"`
-    Env         map[string]string `yaml:"env,omitempty"`
-    DependsOn   []string          `yaml:"depends_on,omitempty"`
+    Cmd           string            `yaml:"cmd"`
+    Description   string            `yaml:"description,omitempty"`
+    Env           map[string]string `yaml:"env,omitempty"`
+    DependsOn     []string          `yaml:"depends_on,omitempty"`
+    Aliases       []string          `yaml:"aliases,omitempty"`
+    Preconditions []string          `yaml:"preconditions,omitempty"`
 }
 
 type Project struct {
     Path string `yaml:"path"`
 }
 
+// Service auto-generates commands by prepending Exec to each command suffix.
+type Service struct {
+    Exec     string            `yaml:"exec"`
+    Commands map[string]string `yaml:"commands,omitempty"`
+}
+
 // The merged result of all config layers
 type MergedConfig struct {
     Projects map[string]Project
     Commands map[string]Command
+    Services map[string]Service
 }
 ```
 
 Merge semantics: later (closer) entries override earlier ones for the same key.
 Merging happens in `config.mergeInto` (`internal/config/loader.go`).
+
+After all layers are merged, `expandServices` is called in `Load` to expand
+`Services` entries into `Commands`. See the services section below.
 
 ## Config hierarchy
 
@@ -92,7 +105,66 @@ Resolution order (lowest → highest priority):
 The `Loader` type (`internal/config/loader.go`) handles all of this.
 `NewLoaderWithGlobal(path)` is provided for use in tests.
 
+## Services
+
+`services` is a top-level config key that auto-generates commands from a shared
+execution prefix (e.g. `docker compose exec <container>`). This avoids repeating
+the prefix in every command definition.
+
+```yaml
+services:
+  sail:
+    exec: "docker compose exec laravel.test"
+    commands:
+      artisan:  "php artisan"   # → docker compose exec laravel.test php artisan
+      composer: "composer"      # → docker compose exec laravel.test composer
+      pnpm:     "pnpm"          # → docker compose exec laravel.test pnpm
+```
+
+`projector artisan cache:clear` then runs
+`docker compose exec laravel.test php artisan cache:clear`.
+
+### Merge semantics for services
+
+Service expansion runs **after** all config layers are merged. Interaction with
+an explicit `commands` entry of the same name:
+
+| Explicit entry has `cmd`? | Result |
+|---------------------------|--------|
+| No explicit entry          | Generated command is inserted as-is. |
+| Yes (`cmd` is set)         | Explicit command wins; generated one is discarded. |
+| No (`cmd` is empty)        | Generated `cmd` is used; explicit metadata (description, env, depends_on, etc.) is preserved. |
+
+The third case lets you annotate a service-generated command without repeating
+the exec prefix:
+
+```yaml
+services:
+  sail:
+    exec: "docker compose exec laravel.test"
+    commands:
+      artisan: "php artisan"
+
+commands:
+  artisan:
+    # No cmd: field — keeps the service-generated cmd
+    description: "Run artisan inside the container"
+    depends_on: [build-assets]
+    aliases: [art]
+```
+
+Services follow the same config hierarchy as commands: a local service definition
+overrides a global one with the same key.
+
 ## depends_on
+
+`depends_on` entries come in two forms:
+
+**Local deps** — plain command names resolved within the current project:
+
+```yaml
+depends_on: [install, build]
+```
 
 `ResolveDependencyOrder` in `internal/runner/deps.go` performs a topological
 sort (Kahn's algorithm) over the transitive closure of a root command's
@@ -103,6 +175,27 @@ sort (Kahn's algorithm) over the transitive closure of a root command's
 
 `Runner.RunWithDeps` runs the returned order sequentially. A failing step
 aborts the chain. It uses `t.Name` (not `t.Command.Cmd`) as the root key.
+
+**Cross-project deps** — entries prefixed with `^` that reference a command in
+another registered project:
+
+```yaml
+depends_on:
+  - "^lib:build"      # run 'build' in the registered project named 'lib'
+  - run-migrations    # local dep, unchanged
+```
+
+Cross-project resolution lives entirely in `internal/cli/run.go` (not in the
+runner) to keep the runner pure. `partitionDeps` splits the `DependsOn` slice
+into cross-project and local lists. `runCrossProjectDeps` loads each referenced
+project's config and executes the command before the local dep chain runs.
+
+Cross-project deps run **before** local deps. When multiple projects share the
+same cross-project dep it is deduplicated and runs once. Transitive cross-project
+deps are resolved recursively with a visited set to detect cycles.
+
+Sentinel: `ErrCrossProjectCycle` (defined in `internal/cli/run.go`) — returned
+when a cycle is detected across project boundaries.
 
 ## Runner
 
@@ -130,8 +223,8 @@ equivalents (no prefix, cleaner output).
 
 - Always wrap errors with context: `fmt.Errorf("load config: %w", err)`
 - Sentinel errors (`ErrNotFound`, `ErrAlreadyExists`, `ErrCyclicDependency`,
-  `ErrUnknownDependency`) are defined in their respective packages and must be
-  checked with `errors.Is`.
+  `ErrUnknownDependency`, `ErrCrossProjectCycle`) are defined in their respective
+  packages and must be checked with `errors.Is`.
 - `internal/cli` commands return errors; `main.go` prints them and sets exit
   code. Never call `os.Exit` inside library code.
 

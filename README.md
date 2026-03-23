@@ -140,6 +140,97 @@ commands:
 | `description` | string | Optional human-readable summary |
 | `env` | map | Extra environment variables set for this command only |
 | `depends_on` | list | Other command names that must complete (successfully) before this one runs |
+| `aliases` | list | Alternative names that invoke the same command |
+| `preconditions` | list | Shell expressions that must exit 0 before the command runs |
+
+### Aliases
+
+A command can declare one or more aliases. Each alias is registered as its own
+entry and resolves to the same command definition:
+
+```yaml
+commands:
+  down:
+    cmd: "docker compose down"
+    aliases: [stop]
+```
+
+Both `projector down` and `projector stop` run `docker compose down`.
+
+### Services
+
+`services` auto-generates commands from a shared execution prefix, eliminating
+the need to repeat container boilerplate across many command definitions.
+
+```yaml
+services:
+  sail:
+    exec: "docker compose exec laravel.test"
+    commands:
+      artisan:  "php artisan"
+      composer: "composer"
+      pnpm:     "pnpm"
+      node:     "node"
+      npm:      "npm"
+```
+
+This is equivalent to defining each command explicitly:
+
+```yaml
+commands:
+  artisan:  { cmd: "docker compose exec laravel.test php artisan" }
+  composer: { cmd: "docker compose exec laravel.test composer" }
+  pnpm:     { cmd: "docker compose exec laravel.test pnpm" }
+  node:     { cmd: "docker compose exec laravel.test node" }
+  npm:      { cmd: "docker compose exec laravel.test npm" }
+```
+
+Then use them naturally, passing extra arguments after the command name:
+
+```bash
+projector artisan cache:clear
+# → docker compose exec laravel.test php artisan cache:clear
+
+projector composer install
+# → docker compose exec laravel.test composer install
+
+projector pnpm i --frozen-lockfile
+# → docker compose exec laravel.test pnpm i --frozen-lockfile
+```
+
+**Layering metadata on service-generated commands**
+
+You can annotate a service-generated command (add a description, `depends_on`,
+`aliases`, `env`, etc.) without repeating the exec prefix. Leave the `cmd`
+field empty — projector fills it in from the service:
+
+```yaml
+services:
+  sail:
+    exec: "docker compose exec laravel.test"
+    commands:
+      artisan: "php artisan"
+
+commands:
+  artisan:
+    # No cmd: field — the generated cmd is used
+    description: "Run artisan inside the Laravel container"
+    depends_on: [build-assets]
+    aliases: [art]
+```
+
+If you do set `cmd`, it fully overrides the service-generated command:
+
+```yaml
+commands:
+  composer:
+    cmd: "composer"           # run locally, not inside the container
+    description: "Run composer locally"
+```
+
+Multiple services can be defined, and they follow the same config hierarchy as
+commands — a closer (more specific) service definition overrides a farther one
+with the same name.
 
 ## Usage
 
@@ -182,6 +273,25 @@ $ projector run deploy
 ```
 
 Dependency execution happens per-project when running across multiple projects, so each project's chain is isolated.
+
+#### Cross-project dependencies
+
+A `depends_on` entry prefixed with `^` references a command in another registered project:
+
+```yaml
+commands:
+  deploy:
+    cmd: "./scripts/deploy.sh"
+    depends_on:
+      - "^lib:build"     # run 'build' in the registered project named 'lib' first
+      - run-migrations   # local command, unchanged
+```
+
+The syntax is `^<project-name>:<command-name>`. The project must be registered via `projector project add`.
+
+Cross-project deps run **before** the local dep chain and the main command. When multiple projects are run concurrently and they share the same cross-project dep, it is deduplicated and runs only once.
+
+Transitive cross-project deps are supported: if `^lib:build` itself depends on `^shared:compile`, the chain resolves correctly (`shared:compile → lib:build → deploy`). Cycles across projects are detected and reported as an error.
 
 ### Managing projects
 

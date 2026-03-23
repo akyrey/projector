@@ -35,6 +35,9 @@ func NewLoaderWithGlobal(globalPath string) *Loader {
 //  1. Global config (~/.config/projector/config.yaml)
 //  2. Ancestor directory .projector.yaml files, from / down to pwd
 //  3. pwd/.projector.yaml (highest priority)
+//
+// After all layers are merged, service definitions are expanded into commands.
+// See expandServices for expansion and merge semantics.
 func (l *Loader) Load(pwd string) (*MergedConfig, error) {
 	merged := NewMergedConfig()
 
@@ -56,6 +59,9 @@ func (l *Loader) Load(pwd string) (*MergedConfig, error) {
 			return nil, fmt.Errorf("load config %s: %w", path, err)
 		}
 	}
+
+	// 4. Expand service definitions into commands now that all layers are merged.
+	expandServices(merged)
 
 	return merged, nil
 }
@@ -158,7 +164,7 @@ func dirChain(pwd string) ([]string, error) {
 }
 
 // mergeInto applies src on top of dst.
-// Commands and projects from src override those in dst with the same key.
+// Commands, projects, and services from src override those in dst with the same key.
 // For each command that declares aliases, each alias is also registered in dst
 // pointing to the same definition (with Aliases cleared to avoid confusion).
 func mergeInto(dst *MergedConfig, src *Config) {
@@ -181,6 +187,52 @@ func mergeInto(dst *MergedConfig, src *Config) {
 			aliasCmd := cmd
 			aliasCmd.Aliases = nil // aliases of aliases are not expanded
 			dst.Commands[alias] = aliasCmd
+		}
+	}
+
+	for name, svc := range src.Services {
+		dst.Services[name] = svc
+	}
+}
+
+// expandServices expands service definitions in merged into commands.
+// It is called once, after all config layers have been merged.
+//
+// For each service, each entry in Service.Commands produces a Command whose
+// Cmd is "<service.Exec> <suffix>". The expansion interacts with any explicit
+// commands already in merged.Commands as follows:
+//
+//   - If no explicit command exists with that name, the generated command is
+//     inserted as-is.
+//   - If an explicit command exists and has a non-empty Cmd field, it fully
+//     overrides the generated command (the user chose a different implementation).
+//   - If an explicit command exists but has an empty Cmd field, the generated
+//     Cmd is filled in and all other fields (description, env, depends_on, etc.)
+//     from the explicit entry are preserved. This lets callers add metadata to
+//     a service-generated command without repeating the exec prefix.
+func expandServices(merged *MergedConfig) {
+	for _, svc := range merged.Services {
+		if svc.Exec == "" {
+			continue // nothing to expand
+		}
+		for cmdName, suffix := range svc.Commands {
+			generatedCmd := svc.Exec
+			if suffix != "" {
+				generatedCmd = svc.Exec + " " + suffix
+			}
+
+			existing, exists := merged.Commands[cmdName]
+			switch {
+			case !exists:
+				// No explicit command — insert the generated one.
+				merged.Commands[cmdName] = Command{Cmd: generatedCmd}
+			case existing.Cmd == "":
+				// Explicit entry has no cmd — fill in the generated cmd, keep metadata.
+				existing.Cmd = generatedCmd
+				merged.Commands[cmdName] = existing
+			default:
+				// Explicit entry has its own cmd — leave it untouched.
+			}
 		}
 	}
 }

@@ -39,24 +39,31 @@ type Target struct {
 
 // Runner executes commands, handling both single and multi-target scenarios.
 type Runner struct {
+	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
 }
 
-// New creates a Runner writing to the given output streams.
-func New(stdout, stderr io.Writer) *Runner {
-	return &Runner{stdout: stdout, stderr: stderr}
+// New creates a Runner with the given I/O streams.
+// stdin is connected to single-target executions so that interactive commands
+// (e.g. "docker compose exec laravel.test php artisan tinker") work correctly.
+// Pass nil to disable stdin (appropriate for concurrent multi-target runs or
+// automated/test contexts where no terminal is available).
+func New(stdin io.Reader, stdout, stderr io.Writer) *Runner {
+	return &Runner{stdin: stdin, stdout: stdout, stderr: stderr}
 }
 
-// NewDefault creates a Runner writing to os.Stdout and os.Stderr.
+// NewDefault creates a Runner connected to os.Stdin, os.Stdout, and os.Stderr.
 func NewDefault() *Runner {
-	return New(os.Stdout, os.Stderr)
+	return New(os.Stdin, os.Stdout, os.Stderr)
 }
 
 // Run executes a single target, streaming its output directly to the runner's
 // stdout/stderr (no prefix). Intended for single-project invocations.
+// stdin is forwarded to the subprocess so that interactive commands work
+// (e.g. "docker compose exec" requires a TTY or -T when stdin is not a terminal).
 func (r *Runner) Run(ctx context.Context, t Target) error {
-	return r.runTarget(ctx, t, r.stdout, r.stderr)
+	return r.runTarget(ctx, t, r.stdin, r.stdout, r.stderr)
 }
 
 // RunWithDeps resolves the depends_on chain for t using t.Name as the root key,
@@ -90,7 +97,7 @@ func (r *Runner) RunWithDeps(ctx context.Context, t Target, commands map[string]
 			step.ExtraArgs = t.ExtraArgs
 		}
 
-		if err := r.runTarget(ctx, step, r.stdout, r.stderr); err != nil {
+		if err := r.runTarget(ctx, step, r.stdin, r.stdout, r.stderr); err != nil {
 			return fmt.Errorf("dependency %q failed: %w", name, err)
 		}
 	}
@@ -176,7 +183,7 @@ func (r *Runner) RunConcurrent(ctx context.Context, targets []Target) error {
 		i, t := i, t // capture loop variables
 		pw := newPrefixWriter(r.stdout, &mu, t.Name, colorFor(i))
 		g.Go(func() error {
-			if err := r.runTarget(gctx, t, pw, pw); err != nil {
+			if err := r.runTarget(gctx, t, nil, pw, pw); err != nil {
 				return fmt.Errorf("[%s] %w", t.Name, err)
 			}
 			return nil
@@ -186,9 +193,11 @@ func (r *Runner) RunConcurrent(ctx context.Context, targets []Target) error {
 	return g.Wait()
 }
 
-// runTarget executes a single target, writing stdout to outW and stderr to errW.
-// If t.DryRun is true the command is printed but not executed.
-func (r *Runner) runTarget(ctx context.Context, t Target, outW, errW io.Writer) error {
+// runTarget executes a single target, reading from inR and writing stdout/stderr
+// to outW/errW. If inR is nil the subprocess receives no stdin (appropriate for
+// concurrent multi-target runs). If t.DryRun is true the command is printed but
+// not executed.
+func (r *Runner) runTarget(ctx context.Context, t Target, inR io.Reader, outW, errW io.Writer) error {
 	shell, flag := shellAndFlag()
 
 	// Build the final shell command string. Extra args are appended verbatim
@@ -235,6 +244,7 @@ func (r *Runner) runTarget(ctx context.Context, t Target, outW, errW io.Writer) 
 		preCmd := exec.CommandContext(ctx, shell, flag, pre)
 		preCmd.Dir = t.Dir
 		preCmd.Env = baseEnv
+		preCmd.Stdin = inR
 		// Precondition output goes to stderr so it doesn't pollute stdout.
 		preCmd.Stderr = errW
 		if err := preCmd.Run(); err != nil {
@@ -244,6 +254,7 @@ func (r *Runner) runTarget(ctx context.Context, t Target, outW, errW io.Writer) 
 
 	cmd := exec.CommandContext(ctx, shell, flag, shellCmd)
 	cmd.Dir = t.Dir
+	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = errW
 	cmd.Env = baseEnv

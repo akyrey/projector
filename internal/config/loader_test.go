@@ -283,3 +283,315 @@ func TestLoad_AliasSelfSkipped(t *testing.T) {
 		t.Errorf("expected 1 command, got %d: %v", len(merged.Commands), merged.Commands)
 	}
 }
+
+// TestExpandServices_Basic verifies that services expand into commands with the
+// correct "<exec> <suffix>" shell command string.
+func TestExpandServices_Basic(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+
+	writeConfig(t, filepath.Join(dir, config.LocalConfigName), &config.Config{
+		Services: map[string]config.Service{
+			"sail": {
+				Exec: "docker compose exec laravel.test",
+				Commands: map[string]string{
+					"artisan":  "php artisan",
+					"composer": "composer",
+				},
+			},
+		},
+	})
+
+	loader := config.NewLoaderWithGlobal(globalPath)
+	merged, err := loader.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		wantCmd string
+	}{
+		{"artisan", "docker compose exec laravel.test php artisan"},
+		{"composer", "docker compose exec laravel.test composer"},
+	}
+
+	for _, tc := range tests {
+		cmd, ok := merged.Commands[tc.name]
+		if !ok {
+			t.Errorf("expected command %q to be generated from service, but not found", tc.name)
+			continue
+		}
+		if cmd.Cmd != tc.wantCmd {
+			t.Errorf("command %q: got cmd %q, want %q", tc.name, cmd.Cmd, tc.wantCmd)
+		}
+	}
+}
+
+// TestExpandServices_EmptySuffix verifies that a command with an empty suffix
+// generates "<exec>" (without a trailing space).
+func TestExpandServices_EmptySuffix(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+
+	writeConfig(t, filepath.Join(dir, config.LocalConfigName), &config.Config{
+		Services: map[string]config.Service{
+			"redis": {
+				Exec: "docker compose exec redis redis-cli",
+				Commands: map[string]string{
+					"redis-cli": "", // empty suffix: exec is the whole command
+				},
+			},
+		},
+	})
+
+	loader := config.NewLoaderWithGlobal(globalPath)
+	merged, err := loader.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cmd, ok := merged.Commands["redis-cli"]
+	if !ok {
+		t.Fatal("expected command 'redis-cli' to be generated")
+	}
+	if cmd.Cmd != "docker compose exec redis redis-cli" {
+		t.Errorf("redis-cli: got cmd %q, want %q", cmd.Cmd, "docker compose exec redis redis-cli")
+	}
+}
+
+// TestExpandServices_MultipleServices verifies that multiple services each
+// generate their own commands independently.
+func TestExpandServices_MultipleServices(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+
+	writeConfig(t, filepath.Join(dir, config.LocalConfigName), &config.Config{
+		Services: map[string]config.Service{
+			"sail": {
+				Exec:     "docker compose exec laravel.test",
+				Commands: map[string]string{"artisan": "php artisan"},
+			},
+			"node": {
+				Exec:     "docker compose exec node",
+				Commands: map[string]string{"pnpm": "pnpm"},
+			},
+		},
+	})
+
+	loader := config.NewLoaderWithGlobal(globalPath)
+	merged, err := loader.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := merged.Commands["artisan"].Cmd; got != "docker compose exec laravel.test php artisan" {
+		t.Errorf("artisan: got %q", got)
+	}
+	if got := merged.Commands["pnpm"].Cmd; got != "docker compose exec node pnpm" {
+		t.Errorf("pnpm: got %q", got)
+	}
+}
+
+// TestExpandServices_ExplicitCmdOverrides verifies that an explicit command with
+// a non-empty Cmd field takes full precedence over a service-generated command.
+func TestExpandServices_ExplicitCmdOverrides(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+
+	writeConfig(t, filepath.Join(dir, config.LocalConfigName), &config.Config{
+		Services: map[string]config.Service{
+			"sail": {
+				Exec:     "docker compose exec laravel.test",
+				Commands: map[string]string{"composer": "composer"},
+			},
+		},
+		Commands: map[string]config.Command{
+			// Explicit cmd overrides the service-generated one (run locally).
+			"composer": {Cmd: "composer", Description: "Run composer locally"},
+		},
+	})
+
+	loader := config.NewLoaderWithGlobal(globalPath)
+	merged, err := loader.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cmd := merged.Commands["composer"]
+	if cmd.Cmd != "composer" {
+		t.Errorf("composer: got cmd %q, want %q (explicit override)", cmd.Cmd, "composer")
+	}
+	if cmd.Description != "Run composer locally" {
+		t.Errorf("composer: description %q, want %q", cmd.Description, "Run composer locally")
+	}
+}
+
+// TestExpandServices_MetadataLayeredOnGenerated verifies that an explicit command
+// entry with no Cmd field preserves the service-generated Cmd while layering its
+// other fields (description, env, depends_on, etc.) on top.
+func TestExpandServices_MetadataLayeredOnGenerated(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+
+	writeConfig(t, filepath.Join(dir, config.LocalConfigName), &config.Config{
+		Services: map[string]config.Service{
+			"sail": {
+				Exec:     "docker compose exec laravel.test",
+				Commands: map[string]string{"artisan": "php artisan"},
+			},
+		},
+		Commands: map[string]config.Command{
+			// No Cmd field — should keep generated cmd and add metadata.
+			"artisan": {
+				Description: "Run artisan inside the container",
+				DependsOn:   []string{"build-assets"},
+				Env:         map[string]string{"APP_ENV": "local"},
+			},
+		},
+	})
+
+	loader := config.NewLoaderWithGlobal(globalPath)
+	merged, err := loader.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cmd := merged.Commands["artisan"]
+	if cmd.Cmd != "docker compose exec laravel.test php artisan" {
+		t.Errorf("artisan: got cmd %q, want generated cmd", cmd.Cmd)
+	}
+	if cmd.Description != "Run artisan inside the container" {
+		t.Errorf("artisan: description %q", cmd.Description)
+	}
+	if len(cmd.DependsOn) != 1 || cmd.DependsOn[0] != "build-assets" {
+		t.Errorf("artisan: depends_on %v", cmd.DependsOn)
+	}
+	if cmd.Env["APP_ENV"] != "local" {
+		t.Errorf("artisan: env APP_ENV %q", cmd.Env["APP_ENV"])
+	}
+}
+
+// TestExpandServices_EmptyExecSkipped verifies that a service with an empty Exec
+// is silently skipped (no commands are generated).
+func TestExpandServices_EmptyExecSkipped(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.yaml")
+
+	writeConfig(t, filepath.Join(dir, config.LocalConfigName), &config.Config{
+		Services: map[string]config.Service{
+			"broken": {
+				Exec:     "", // empty — should be skipped
+				Commands: map[string]string{"artisan": "php artisan"},
+			},
+		},
+	})
+
+	loader := config.NewLoaderWithGlobal(globalPath)
+	merged, err := loader.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if _, ok := merged.Commands["artisan"]; ok {
+		t.Error("expected no 'artisan' command from service with empty exec")
+	}
+}
+
+// TestExpandServices_ServiceHierarchy verifies that services participate in the
+// config hierarchy: a local config's service overrides a global one with the
+// same name, and commands from both layers are correctly expanded.
+func TestExpandServices_ServiceHierarchy(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	globalPath := filepath.Join(root, "global.yaml")
+
+	// Global: defines sail service with artisan.
+	writeConfig(t, globalPath, &config.Config{
+		Services: map[string]config.Service{
+			"sail": {
+				Exec:     "docker compose exec app",
+				Commands: map[string]string{"artisan": "php artisan"},
+			},
+		},
+	})
+
+	// Local (sub): overrides sail service with a different container name.
+	writeConfig(t, filepath.Join(sub, config.LocalConfigName), &config.Config{
+		Services: map[string]config.Service{
+			"sail": {
+				Exec:     "docker compose exec laravel.test", // overrides global
+				Commands: map[string]string{"artisan": "php artisan", "composer": "composer"},
+			},
+		},
+	})
+
+	loader := config.NewLoaderWithGlobal(globalPath)
+	merged, err := loader.Load(sub)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// artisan should use the local container name.
+	if got := merged.Commands["artisan"].Cmd; got != "docker compose exec laravel.test php artisan" {
+		t.Errorf("artisan: got %q, want local override", got)
+	}
+	// composer should also be present from the local service definition.
+	if got := merged.Commands["composer"].Cmd; got != "docker compose exec laravel.test composer" {
+		t.Errorf("composer: got %q", got)
+	}
+}
+
+// TestExpandServices_GlobalServiceLocalMetadata verifies the combined scenario:
+// a service defined globally provides the Cmd, while a local explicit command
+// without a Cmd layers metadata on top.
+func TestExpandServices_GlobalServiceLocalMetadata(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	globalPath := filepath.Join(root, "global.yaml")
+
+	// Global: defines the service.
+	writeConfig(t, globalPath, &config.Config{
+		Services: map[string]config.Service{
+			"sail": {
+				Exec:     "docker compose exec laravel.test",
+				Commands: map[string]string{"artisan": "php artisan"},
+			},
+		},
+	})
+
+	// Local: adds metadata to artisan without repeating the exec prefix.
+	writeConfig(t, filepath.Join(sub, config.LocalConfigName), &config.Config{
+		Commands: map[string]config.Command{
+			"artisan": {
+				Description: "Run artisan in container",
+				DependsOn:   []string{"migrate"},
+			},
+		},
+	})
+
+	loader := config.NewLoaderWithGlobal(globalPath)
+	merged, err := loader.Load(sub)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cmd := merged.Commands["artisan"]
+	if cmd.Cmd != "docker compose exec laravel.test php artisan" {
+		t.Errorf("artisan: cmd %q, want service-generated cmd", cmd.Cmd)
+	}
+	if cmd.Description != "Run artisan in container" {
+		t.Errorf("artisan: description %q", cmd.Description)
+	}
+	if len(cmd.DependsOn) != 1 || cmd.DependsOn[0] != "migrate" {
+		t.Errorf("artisan: depends_on %v", cmd.DependsOn)
+	}
+}

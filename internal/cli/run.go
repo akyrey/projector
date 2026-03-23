@@ -149,7 +149,7 @@ func runInCwd(d *deps, cmdName string, extraArgs []string, dryRun bool) error {
 	}
 
 	// Run cross-project deps first (sequentially per unique project).
-	if err := runCrossProjectDeps(d, crossDeps, dryRun); err != nil {
+	if err := runCrossProjectDeps(d, crossDeps, dryRun, nil); err != nil {
 		return err
 	}
 
@@ -247,7 +247,7 @@ func runInProjects(d *deps, cmdName string, projectNames []string, extraArgs []s
 			kj := ordered[j].projName + ":" + ordered[j].cmdName
 			return ki < kj
 		})
-		if err := runCrossProjectDeps(d, ordered, dryRun); err != nil {
+		if err := runCrossProjectDeps(d, ordered, dryRun, nil); err != nil {
 			return err
 		}
 	}
@@ -342,10 +342,25 @@ func partitionDeps(dependsOn []string) (cross []crossDep, local []string, err er
 	return cross, local, nil
 }
 
+// ErrCrossProjectCycle is returned when cross-project depends_on entries form a cycle.
+var ErrCrossProjectCycle = errors.New("cross-project cyclic dependency detected")
+
 // runCrossProjectDeps resolves and runs each cross-project dep sequentially.
 // Each dep is run in its registered project's directory.
-func runCrossProjectDeps(d *deps, deps []crossDep, dryRun bool) error {
+// visited tracks in-progress nodes (keyed by "proj\x00cmd") to detect cycles.
+// Pass nil on the first call; the map is allocated lazily.
+func runCrossProjectDeps(d *deps, deps []crossDep, dryRun bool, visited map[string]struct{}) error {
+	if visited == nil {
+		visited = make(map[string]struct{})
+	}
+
 	for _, cd := range deps {
+		key := cd.projName + "\x00" + cd.cmdName
+		if _, seen := visited[key]; seen {
+			return fmt.Errorf("%w: %s:%s", ErrCrossProjectCycle, cd.projName, cd.cmdName)
+		}
+		visited[key] = struct{}{}
+
 		proj, err := d.registry.Get(cd.projName)
 		if err != nil {
 			if errors.Is(err, project.ErrNotFound) {
@@ -369,9 +384,11 @@ func runCrossProjectDeps(d *deps, deps []crossDep, dryRun bool) error {
 		if err != nil {
 			return fmt.Errorf("cross-project dep %q/%q: %w", cd.projName, cd.cmdName, err)
 		}
-		if err := runCrossProjectDeps(d, subCross, dryRun); err != nil {
+		if err := runCrossProjectDeps(d, subCross, dryRun, visited); err != nil {
 			return err
 		}
+
+		delete(visited, key)
 
 		localCmd := cmd
 		localCmd.DependsOn = localDeps

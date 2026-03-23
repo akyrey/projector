@@ -233,7 +233,7 @@ func TestResolveDependencyOrder_SharedDep(t *testing.T) {
 // TestRunWithDeps_NoDeps: a command without deps runs normally.
 func TestRunWithDeps_NoDeps(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	cmds := commands("start", "echo started")
 
@@ -255,7 +255,7 @@ func TestRunWithDeps_NoDeps(t *testing.T) {
 // TestRunWithDeps_LinearChain: verify deps execute before the main command.
 func TestRunWithDeps_LinearChain(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	cmds := commandsWithDeps([]struct {
 		name string
@@ -292,7 +292,7 @@ func TestRunWithDeps_LinearChain(t *testing.T) {
 // TestRunWithDeps_FailingDep: a failing dependency stops execution.
 func TestRunWithDeps_FailingDep(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	cmds := commandsWithDeps([]struct {
 		name string
@@ -323,7 +323,7 @@ func TestRunWithDeps_FailingDep(t *testing.T) {
 // TestRunWithDeps_CycleReturnsError: a cycle in depends_on is detected at resolve time.
 func TestRunWithDeps_CycleReturnsError(t *testing.T) {
 	var out bytes.Buffer
-	r := runner.New(&out, &out)
+	r := runner.New(nil, &out, &out)
 
 	cmds := commandsWithDeps([]struct {
 		name string
