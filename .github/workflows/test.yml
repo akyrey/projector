@@ -1,0 +1,31 @@
+name: test
+
+on:
+  workflow_call:
+
+jobs:
+  run:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          check-latest: true
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Run tests
+        run: go test -v -count=1 -race -shuffle=on -coverprofile=coverage.txt ./...
+
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v5
+        continue-on-error: true
+        with:
+          token: ${{secrets.CODECOV_TOKEN}}
+          file: ./coverage.txt
+          fail_ci_if_error: false

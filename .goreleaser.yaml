@@ -89,6 +89,7 @@ brews:
       owner: akyrey
       name: homebrew-tap
       branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com

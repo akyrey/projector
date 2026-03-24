@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # required to create GitHub releases and upload assets
+
+jobs:
+  test:
+    name: Test before release
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # goreleaser needs full history for changelog
+
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          check-latest: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Required to push the Homebrew formula to akyrey/homebrew-tap.
+          # Create a personal access token with repo scope and add it as a secret.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
