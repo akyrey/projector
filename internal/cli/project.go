@@ -47,7 +47,9 @@ Example:
 				}
 				return fmt.Errorf("add project: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Project %q registered.\n", name)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Project %q registered.\n", name); err != nil {
+				return err
+			}
 			return nil
 		},
 	}
@@ -68,7 +70,9 @@ func newProjectRemoveCmd(d *deps) *cobra.Command {
 				}
 				return fmt.Errorf("remove project: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Project %q removed.\n", name)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Project %q removed.\n", name); err != nil {
+				return err
+			}
 			return nil
 		},
 	}
@@ -86,7 +90,9 @@ func newProjectListCmd(d *deps) *cobra.Command {
 			}
 
 			if len(projects) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No projects registered. Use 'projector project add <name> <path>' to register one.")
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "No projects registered. Use 'projector project add <name> <path>' to register one."); err != nil {
+					return err
+				}
 				return nil
 			}
 
@@ -97,9 +103,13 @@ func newProjectListCmd(d *deps) *cobra.Command {
 			}
 			sort.Strings(names)
 
-			fmt.Fprintln(cmd.OutOrStdout(), "Registered projects:")
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Registered projects:"); err != nil {
+				return err
+			}
 			for _, name := range names {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n", name, projects[name].Path)
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n", name, projects[name].Path); err != nil {
+					return err
+				}
 			}
 
 			return nil

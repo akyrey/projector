@@ -60,7 +60,9 @@ Examples:
 				return fmt.Errorf("prepare config file: %w", err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Opening %s\n", path)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Opening %s\n", path); err != nil {
+				return err
+			}
 			return editor.Open(path)
 		},
 	}
@@ -118,7 +120,9 @@ Examples:
 			if global {
 				scope = "global"
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Command %q set in %s config.\n", name, scope)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Command %q set in %s config.\n", name, scope); err != nil {
+				return err
+			}
 			return nil
 		},
 	}
@@ -174,7 +178,9 @@ Examples:
 			if global {
 				scope = "global"
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Command %q removed from %s config.\n", name, scope)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Command %q removed from %s config.\n", name, scope); err != nil {
+				return err
+			}
 			return nil
 		},
 	}
@@ -218,8 +224,12 @@ Example:
 				return fmt.Errorf("marshal config: %w", err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "# Resolved config for: %s\n", pwd)
-			fmt.Fprint(cmd.OutOrStdout(), string(data))
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "# Resolved config for: %s\n", pwd); err != nil {
+				return err
+			}
+			if _, err := fmt.Fprint(cmd.OutOrStdout(), string(data)); err != nil {
+				return err
+			}
 			return nil
 		},
 	}

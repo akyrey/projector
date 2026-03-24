@@ -31,7 +31,9 @@ Example:
 			}
 
 			if len(merged.Commands) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No commands defined. Use 'projector config set' to add one.")
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "No commands defined. Use 'projector config set' to add one."); err != nil {
+					return err
+				}
 				return nil
 			}
 
@@ -42,16 +44,24 @@ Example:
 			}
 			sort.Strings(names)
 
-			fmt.Fprintln(cmd.OutOrStdout(), "Available commands:")
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Available commands:"); err != nil {
+				return err
+			}
 			for _, name := range names {
 				c := merged.Commands[name]
 				if c.Description != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n    cmd: %s\n", name, c.Description, c.Cmd)
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n    cmd: %s\n", name, c.Description, c.Cmd); err != nil {
+						return err
+					}
 				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n", name, c.Cmd)
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n", name, c.Cmd); err != nil {
+						return err
+					}
 				}
 				if len(c.Aliases) > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), "    aliases: %v\n", c.Aliases)
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "    aliases: %v\n", c.Aliases); err != nil {
+						return err
+					}
 				}
 				if len(c.Env) > 0 {
 					envKeys := make([]string, 0, len(c.Env))
@@ -60,16 +70,22 @@ Example:
 					}
 					sort.Strings(envKeys)
 					for _, k := range envKeys {
-						fmt.Fprintf(cmd.OutOrStdout(), "    env: %s=%s\n", k, c.Env[k])
+						if _, err := fmt.Fprintf(cmd.OutOrStdout(), "    env: %s=%s\n", k, c.Env[k]); err != nil {
+							return err
+						}
 					}
 				}
 				if len(c.Preconditions) > 0 {
 					for _, pre := range c.Preconditions {
-						fmt.Fprintf(cmd.OutOrStdout(), "    precondition: %s\n", pre)
+						if _, err := fmt.Fprintf(cmd.OutOrStdout(), "    precondition: %s\n", pre); err != nil {
+							return err
+						}
 					}
 				}
 				if len(c.DependsOn) > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), "    depends_on: %v\n", c.DependsOn)
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "    depends_on: %v\n", c.DependsOn); err != nil {
+						return err
+					}
 				}
 			}
 

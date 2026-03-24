@@ -233,9 +233,13 @@ func (r *Runner) runTarget(ctx context.Context, t Target, inR io.Reader, outW, e
 	if t.DryRun {
 		// Print preconditions and the command; don't execute anything.
 		for _, pre := range t.Command.Preconditions {
-			fmt.Fprintf(outW, "[dry-run] %s: precondition: %s %s %q\n", label, shell, flag, pre)
+			if _, err := fmt.Fprintf(outW, "[dry-run] %s: precondition: %s %s %q\n", label, shell, flag, pre); err != nil {
+				return err
+			}
 		}
-		fmt.Fprintf(outW, "[dry-run] %s: %s %s %q\n", label, shell, flag, shellCmd)
+		if _, err := fmt.Fprintf(outW, "[dry-run] %s: %s %s %q\n", label, shell, flag, shellCmd); err != nil {
+			return err
+		}
 		return nil
 	}
 

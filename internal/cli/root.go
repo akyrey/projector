@@ -38,7 +38,7 @@ func NewRootCmd(version string) *cobra.Command {
 	if err != nil {
 		// Loader construction only fails when we cannot determine the home dir,
 		// which is a fatal misconfiguration.
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 	return newRootCmdWithLoader(version, loader)

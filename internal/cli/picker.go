@@ -25,16 +25,24 @@ func pickCommand(commands map[string]config.Command, in io.Reader, out io.Writer
 	}
 	sort.Strings(names)
 
-	fmt.Fprintln(out, "Choose a command:")
+	if _, err := fmt.Fprintln(out, "Choose a command:"); err != nil {
+		return "", err
+	}
 	for i, name := range names {
 		cmd := commands[name]
 		if cmd.Description != "" {
-			fmt.Fprintf(out, "  %2d) %-20s %s\n", i+1, name, cmd.Description)
+			if _, err := fmt.Fprintf(out, "  %2d) %-20s %s\n", i+1, name, cmd.Description); err != nil {
+				return "", err
+			}
 		} else {
-			fmt.Fprintf(out, "  %2d) %s\n", i+1, name)
+			if _, err := fmt.Fprintf(out, "  %2d) %s\n", i+1, name); err != nil {
+				return "", err
+			}
 		}
 	}
-	fmt.Fprint(out, "Enter number or name: ")
+	if _, err := fmt.Fprint(out, "Enter number or name: "); err != nil {
+		return "", err
+	}
 
 	scanner := bufio.NewScanner(in)
 	if !scanner.Scan() {
