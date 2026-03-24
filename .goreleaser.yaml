@@ -33,7 +33,7 @@ builds:
 
 archives:
   - id: projector
-    builds:
+    ids:
       - projector
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
@@ -80,7 +80,7 @@ release:
   prerelease: auto
   name_template: "v{{.Version}}"
 
-brews:
+homebrew_casks:
   - name: projector
     homepage: https://github.com/akyrey/projector
     description: "Run project commands across multiple directories"
@@ -94,8 +94,4 @@ brews:
       name: goreleaserbot
       email: bot@goreleaser.com
     commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
-    directory: Formula
-    install: |
-      bin.install "projector"
-    test: |
-      system "#{bin}/projector", "--version"
+    directory: Casks
