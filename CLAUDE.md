@@ -52,6 +52,21 @@ application code (not intended to be imported by external packages).
 ## Config types
 
 ```go
+// StringOrList holds a single shell command string or an ordered list of them.
+// Multiple commands run sequentially; the chain aborts on the first non-zero exit.
+// YAML accepts both forms:
+//   cmd: "single command"
+//   cmd:
+//     - "first command"
+//     - "second command"
+type StringOrList struct { /* unexported */ }
+
+func NewStringOrList(cmds ...string) StringOrList
+func (s StringOrList) IsEmpty() bool   // true when no non-empty command strings
+func (s StringOrList) IsMulti() bool   // true when more than one command string
+func (s StringOrList) Values() []string
+func (s StringOrList) String() string  // joins with " && " for display
+
 // A single config file
 type Config struct {
     Projects map[string]Project `yaml:"projects,omitempty"` // global only
@@ -60,7 +75,7 @@ type Config struct {
 }
 
 type Command struct {
-    Cmd           string            `yaml:"cmd"`
+    Cmd           StringOrList      `yaml:"cmd"`
     Description   string            `yaml:"description,omitempty"`
     Env           map[string]string `yaml:"env,omitempty"`
     DependsOn     []string          `yaml:"depends_on,omitempty"`
@@ -91,6 +106,17 @@ Merging happens in `config.mergeInto` (`internal/config/loader.go`).
 
 After all layers are merged, `expandServices` is called in `Load` to expand
 `Services` entries into `Commands`. See the services section below.
+
+### StringOrList serialisation notes
+
+- `MarshalYAML`: single-element list → scalar (round-trip clean); multi-element
+  list → YAML sequence; empty → `nil` (field omitted in output).
+- `UnmarshalYAML`: scalar `""` or `!!null` tag → empty (not `[]string{""}`).
+  This is the correct sentinel for "no cmd set" used by `expandServices`.
+- `IsEmpty()` considers a list empty if it contains no non-empty strings.
+- Use `existing.Cmd.IsEmpty()` (not `== ""`) to detect unset `cmd` in
+  `expandServices` and anywhere else that checks whether a command has been
+  given an explicit shell string.
 
 ## Config hierarchy
 
@@ -218,6 +244,14 @@ and a shared `sync.Mutex` to serialise writes to the prefix writer.
 
 For a single target, both concurrent variants delegate to the non-concurrent
 equivalents (no prefix, cleaner output).
+
+### Multi-step commands
+
+When `t.Command.Cmd` contains more than one string (`IsMulti() == true`),
+`runTarget` loops over `t.Command.Cmd.Values()` and executes each step via
+`sh -c` in sequence. The chain aborts on the first non-zero exit. `ExtraArgs`
+are appended only to the **last** step. Preconditions run once before the
+first step. In dry-run mode each step is printed separately.
 
 ## Error handling
 

@@ -53,7 +53,7 @@ func TestSaveAndLoadFile(t *testing.T) {
 		},
 		Commands: map[string]config.Command{
 			"start": {
-				Cmd:         "docker compose up -d",
+				Cmd:         config.NewStringOrList("docker compose up -d"),
 				Description: "Start services",
 				Env:         map[string]string{"COMPOSE_FILE": "docker-compose.dev.yml"},
 			},
@@ -74,11 +74,101 @@ func TestSaveAndLoadFile(t *testing.T) {
 	}
 
 	startCmd := loaded.Commands["start"]
-	if startCmd.Cmd != "docker compose up -d" {
-		t.Errorf("cmd: got %q, want %q", startCmd.Cmd, "docker compose up -d")
+	if startCmd.Cmd.String() != "docker compose up -d" {
+		t.Errorf("cmd: got %q, want %q", startCmd.Cmd.String(), "docker compose up -d")
 	}
 	if startCmd.Env["COMPOSE_FILE"] != "docker-compose.dev.yml" {
 		t.Errorf("env: got %q, want %q", startCmd.Env["COMPOSE_FILE"], "docker-compose.dev.yml")
+	}
+}
+
+// TestSaveAndLoadFile_ArrayCmd verifies that a multi-command list round-trips correctly.
+func TestSaveAndLoadFile_ArrayCmd(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	original := &config.Config{
+		Commands: map[string]config.Command{
+			"restart": {
+				Cmd:         config.NewStringOrList("./vendor/bin/sail down", "./vendor/bin/sail up -d"),
+				Description: "Restart sail",
+			},
+		},
+	}
+
+	if err := config.SaveFile(path, original); err != nil {
+		t.Fatalf("SaveFile: %v", err)
+	}
+
+	loaded, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+
+	restart := loaded.Commands["restart"]
+	if !restart.Cmd.IsMulti() {
+		t.Fatalf("expected IsMulti to be true; values=%v", restart.Cmd.Values())
+	}
+	vals := restart.Cmd.Values()
+	if len(vals) != 2 {
+		t.Fatalf("expected 2 cmd values, got %d: %v", len(vals), vals)
+	}
+	if vals[0] != "./vendor/bin/sail down" {
+		t.Errorf("cmd[0]: got %q, want %q", vals[0], "./vendor/bin/sail down")
+	}
+	if vals[1] != "./vendor/bin/sail up -d" {
+		t.Errorf("cmd[1]: got %q, want %q", vals[1], "./vendor/bin/sail up -d")
+	}
+	if restart.Cmd.String() != "./vendor/bin/sail down && ./vendor/bin/sail up -d" {
+		t.Errorf("String(): got %q", restart.Cmd.String())
+	}
+}
+
+// TestStringOrList_UnmarshalYAML_Scalar verifies that a plain YAML string is accepted.
+func TestStringOrList_UnmarshalYAML_Scalar(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("commands:\n  start:\n    cmd: \"echo hello\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	cmd := loaded.Commands["start"]
+	if cmd.Cmd.IsEmpty() {
+		t.Fatal("expected non-empty cmd")
+	}
+	if cmd.Cmd.IsMulti() {
+		t.Errorf("expected single cmd, got multi: %v", cmd.Cmd.Values())
+	}
+	if cmd.Cmd.String() != "echo hello" {
+		t.Errorf("String(): got %q, want %q", cmd.Cmd.String(), "echo hello")
+	}
+}
+
+// TestStringOrList_UnmarshalYAML_Sequence verifies that a YAML list is accepted.
+func TestStringOrList_UnmarshalYAML_Sequence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := "commands:\n  restart:\n    cmd:\n      - \"sail down\"\n      - \"sail up -d\"\n"
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	cmd := loaded.Commands["restart"]
+	if !cmd.Cmd.IsMulti() {
+		t.Fatalf("expected IsMulti, got single: %v", cmd.Cmd.Values())
+	}
+	vals := cmd.Cmd.Values()
+	if vals[0] != "sail down" || vals[1] != "sail up -d" {
+		t.Errorf("unexpected values: %v", vals)
+	}
+	if cmd.Cmd.String() != "sail down && sail up -d" {
+		t.Errorf("String(): got %q", cmd.Cmd.String())
 	}
 }
 
@@ -101,29 +191,29 @@ func TestLoader_Load_HierarchyMerge(t *testing.T) {
 	// Global: defines 'start' and 'stop'.
 	writeConfig(t, globalPath, &config.Config{
 		Commands: map[string]config.Command{
-			"start": {Cmd: "global-start"},
-			"stop":  {Cmd: "global-stop"},
+			"start": {Cmd: config.NewStringOrList("global-start")},
+			"stop":  {Cmd: config.NewStringOrList("global-stop")},
 		},
 	})
 
 	// /a: overrides 'start'.
 	writeConfig(t, filepath.Join(a, config.LocalConfigName), &config.Config{
 		Commands: map[string]config.Command{
-			"start": {Cmd: "a-start"},
+			"start": {Cmd: config.NewStringOrList("a-start")},
 		},
 	})
 
 	// /a/b: adds 'build'.
 	writeConfig(t, filepath.Join(b, config.LocalConfigName), &config.Config{
 		Commands: map[string]config.Command{
-			"build": {Cmd: "b-build"},
+			"build": {Cmd: config.NewStringOrList("b-build")},
 		},
 	})
 
 	// /a/b/c: overrides 'start' again.
 	writeConfig(t, filepath.Join(c, config.LocalConfigName), &config.Config{
 		Commands: map[string]config.Command{
-			"start": {Cmd: "c-start"},
+			"start": {Cmd: config.NewStringOrList("c-start")},
 		},
 	})
 
@@ -134,17 +224,17 @@ func TestLoader_Load_HierarchyMerge(t *testing.T) {
 	}
 
 	// 'start' should come from /a/b/c (most specific).
-	if got := merged.Commands["start"].Cmd; got != "c-start" {
+	if got := merged.Commands["start"].Cmd.String(); got != "c-start" {
 		t.Errorf("start: got %q, want %q", got, "c-start")
 	}
 
 	// 'stop' should come from global (only defined there).
-	if got := merged.Commands["stop"].Cmd; got != "global-stop" {
+	if got := merged.Commands["stop"].Cmd.String(); got != "global-stop" {
 		t.Errorf("stop: got %q, want %q", got, "global-stop")
 	}
 
 	// 'build' should come from /a/b.
-	if got := merged.Commands["build"].Cmd; got != "b-build" {
+	if got := merged.Commands["build"].Cmd.String(); got != "b-build" {
 		t.Errorf("build: got %q, want %q", got, "b-build")
 	}
 }
@@ -154,7 +244,7 @@ func TestLoader_Load_NoLocalFiles(t *testing.T) {
 	globalPath := filepath.Join(t.TempDir(), "global.yaml")
 	writeConfig(t, globalPath, &config.Config{
 		Commands: map[string]config.Command{
-			"start": {Cmd: "global-start"},
+			"start": {Cmd: config.NewStringOrList("global-start")},
 		},
 	})
 
@@ -167,7 +257,7 @@ func TestLoader_Load_NoLocalFiles(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if got := merged.Commands["start"].Cmd; got != "global-start" {
+	if got := merged.Commands["start"].Cmd.String(); got != "global-start" {
 		t.Errorf("start: got %q, want %q", got, "global-start")
 	}
 }
@@ -180,7 +270,7 @@ func TestLoader_Load_GlobalAbsent(t *testing.T) {
 	// Write a local config in pwd.
 	writeConfig(t, filepath.Join(pwd, config.LocalConfigName), &config.Config{
 		Commands: map[string]config.Command{
-			"start": {Cmd: "local-start"},
+			"start": {Cmd: config.NewStringOrList("local-start")},
 		},
 	})
 
@@ -189,7 +279,7 @@ func TestLoader_Load_GlobalAbsent(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if got := merged.Commands["start"].Cmd; got != "local-start" {
+	if got := merged.Commands["start"].Cmd.String(); got != "local-start" {
 		t.Errorf("start: got %q, want %q", got, "local-start")
 	}
 }
@@ -219,7 +309,7 @@ func TestLoad_AliasExpansion(t *testing.T) {
 	writeConfig(t, filepath.Join(dir, config.LocalConfigName), &config.Config{
 		Commands: map[string]config.Command{
 			"build": {
-				Cmd:     "go build ./...",
+				Cmd:     config.NewStringOrList("go build ./..."),
 				Aliases: []string{"b", "compile"},
 			},
 		},
@@ -243,8 +333,8 @@ func TestLoad_AliasExpansion(t *testing.T) {
 			t.Errorf("expected alias %q in merged config", alias)
 			continue
 		}
-		if cmd.Cmd != "go build ./..." {
-			t.Errorf("alias %q: want cmd %q, got %q", alias, "go build ./...", cmd.Cmd)
+		if cmd.Cmd.String() != "go build ./..." {
+			t.Errorf("alias %q: want cmd %q, got %q", alias, "go build ./...", cmd.Cmd.String())
 		}
 		// Aliases of aliases must not be expanded (Aliases field should be nil).
 		if len(cmd.Aliases) != 0 {
@@ -261,7 +351,7 @@ func TestLoad_AliasSelfSkipped(t *testing.T) {
 	writeConfig(t, filepath.Join(dir, config.LocalConfigName), &config.Config{
 		Commands: map[string]config.Command{
 			"start": {
-				Cmd:     "echo start",
+				Cmd:     config.NewStringOrList("echo start"),
 				Aliases: []string{"start"}, // self-alias, should be ignored
 			},
 		},
@@ -275,8 +365,8 @@ func TestLoad_AliasSelfSkipped(t *testing.T) {
 
 	// 'start' should appear exactly once (with its Aliases intact).
 	cmd := merged.Commands["start"]
-	if cmd.Cmd != "echo start" {
-		t.Errorf("start: got cmd %q", cmd.Cmd)
+	if cmd.Cmd.String() != "echo start" {
+		t.Errorf("start: got cmd %q", cmd.Cmd.String())
 	}
 	// Only 'start' itself should be in the map — self-alias doesn't create extra entry.
 	if len(merged.Commands) != 1 {
@@ -322,8 +412,8 @@ func TestExpandServices_Basic(t *testing.T) {
 			t.Errorf("expected command %q to be generated from service, but not found", tc.name)
 			continue
 		}
-		if cmd.Cmd != tc.wantCmd {
-			t.Errorf("command %q: got cmd %q, want %q", tc.name, cmd.Cmd, tc.wantCmd)
+		if cmd.Cmd.String() != tc.wantCmd {
+			t.Errorf("command %q: got cmd %q, want %q", tc.name, cmd.Cmd.String(), tc.wantCmd)
 		}
 	}
 }
@@ -355,8 +445,8 @@ func TestExpandServices_EmptySuffix(t *testing.T) {
 	if !ok {
 		t.Fatal("expected command 'redis-cli' to be generated")
 	}
-	if cmd.Cmd != "docker compose exec redis redis-cli" {
-		t.Errorf("redis-cli: got cmd %q, want %q", cmd.Cmd, "docker compose exec redis redis-cli")
+	if cmd.Cmd.String() != "docker compose exec redis redis-cli" {
+		t.Errorf("redis-cli: got cmd %q, want %q", cmd.Cmd.String(), "docker compose exec redis redis-cli")
 	}
 }
 
@@ -385,10 +475,10 @@ func TestExpandServices_MultipleServices(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if got := merged.Commands["artisan"].Cmd; got != "docker compose exec laravel.test php artisan" {
+	if got := merged.Commands["artisan"].Cmd.String(); got != "docker compose exec laravel.test php artisan" {
 		t.Errorf("artisan: got %q", got)
 	}
-	if got := merged.Commands["pnpm"].Cmd; got != "docker compose exec node pnpm" {
+	if got := merged.Commands["pnpm"].Cmd.String(); got != "docker compose exec node pnpm" {
 		t.Errorf("pnpm: got %q", got)
 	}
 }
@@ -408,7 +498,7 @@ func TestExpandServices_ExplicitCmdOverrides(t *testing.T) {
 		},
 		Commands: map[string]config.Command{
 			// Explicit cmd overrides the service-generated one (run locally).
-			"composer": {Cmd: "composer", Description: "Run composer locally"},
+			"composer": {Cmd: config.NewStringOrList("composer"), Description: "Run composer locally"},
 		},
 	})
 
@@ -419,8 +509,8 @@ func TestExpandServices_ExplicitCmdOverrides(t *testing.T) {
 	}
 
 	cmd := merged.Commands["composer"]
-	if cmd.Cmd != "composer" {
-		t.Errorf("composer: got cmd %q, want %q (explicit override)", cmd.Cmd, "composer")
+	if cmd.Cmd.String() != "composer" {
+		t.Errorf("composer: got cmd %q, want %q (explicit override)", cmd.Cmd.String(), "composer")
 	}
 	if cmd.Description != "Run composer locally" {
 		t.Errorf("composer: description %q, want %q", cmd.Description, "Run composer locally")
@@ -458,8 +548,8 @@ func TestExpandServices_MetadataLayeredOnGenerated(t *testing.T) {
 	}
 
 	cmd := merged.Commands["artisan"]
-	if cmd.Cmd != "docker compose exec laravel.test php artisan" {
-		t.Errorf("artisan: got cmd %q, want generated cmd", cmd.Cmd)
+	if cmd.Cmd.String() != "docker compose exec laravel.test php artisan" {
+		t.Errorf("artisan: got cmd %q, want generated cmd", cmd.Cmd.String())
 	}
 	if cmd.Description != "Run artisan inside the container" {
 		t.Errorf("artisan: description %q", cmd.Description)
@@ -537,11 +627,11 @@ func TestExpandServices_ServiceHierarchy(t *testing.T) {
 	}
 
 	// artisan should use the local container name.
-	if got := merged.Commands["artisan"].Cmd; got != "docker compose exec laravel.test php artisan" {
+	if got := merged.Commands["artisan"].Cmd.String(); got != "docker compose exec laravel.test php artisan" {
 		t.Errorf("artisan: got %q, want local override", got)
 	}
 	// composer should also be present from the local service definition.
-	if got := merged.Commands["composer"].Cmd; got != "docker compose exec laravel.test composer" {
+	if got := merged.Commands["composer"].Cmd.String(); got != "docker compose exec laravel.test composer" {
 		t.Errorf("composer: got %q", got)
 	}
 }
@@ -585,8 +675,8 @@ func TestExpandServices_GlobalServiceLocalMetadata(t *testing.T) {
 	}
 
 	cmd := merged.Commands["artisan"]
-	if cmd.Cmd != "docker compose exec laravel.test php artisan" {
-		t.Errorf("artisan: cmd %q, want service-generated cmd", cmd.Cmd)
+	if cmd.Cmd.String() != "docker compose exec laravel.test php artisan" {
+		t.Errorf("artisan: cmd %q, want service-generated cmd", cmd.Cmd.String())
 	}
 	if cmd.Description != "Run artisan in container" {
 		t.Errorf("artisan: description %q", cmd.Description)

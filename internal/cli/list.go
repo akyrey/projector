@@ -50,11 +50,11 @@ Example:
 			for _, name := range names {
 				c := merged.Commands[name]
 				if c.Description != "" {
-					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n    cmd: %s\n", name, c.Description, c.Cmd); err != nil {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n    cmd: %s\n", name, c.Description, c.Cmd.String()); err != nil {
 						return err
 					}
 				} else {
-					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n", name, c.Cmd); err != nil {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %-20s %s\n", name, c.Cmd.String()); err != nil {
 						return err
 					}
 				}

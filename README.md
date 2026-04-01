@@ -136,12 +136,48 @@ commands:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cmd` | string | Shell command to execute (via `sh -c` on Unix, `cmd /C` on Windows) |
+| `cmd` | string or list | Shell command(s) to execute (via `sh -c`). A list runs steps sequentially; the chain aborts on the first non-zero exit. |
 | `description` | string | Optional human-readable summary |
 | `env` | map | Extra environment variables set for this command only |
 | `depends_on` | list | Other command names that must complete (successfully) before this one runs |
 | `aliases` | list | Alternative names that invoke the same command |
 | `preconditions` | list | Shell expressions that must exit 0 before the command runs |
+
+### Multi-step commands
+
+`cmd` accepts either a single string or a YAML list of strings. When a list is
+given, each step runs sequentially via `sh -c`; the chain aborts on the first
+non-zero exit. Extra arguments passed on the CLI are appended to the **last**
+step only.
+
+```yaml
+commands:
+  restart:
+    cmd:
+      - "./vendor/bin/sail down"
+      - "./vendor/bin/sail up -d"
+    description: "Restart Laravel Sail"
+
+  deploy:
+    cmd:
+      - "npm run build"
+      - "rsync -az dist/ user@host:/var/www/app"
+      - "ssh user@host systemctl restart app"
+```
+
+```bash
+projector restart
+# executes: ./vendor/bin/sail down
+#       then: ./vendor/bin/sail up -d
+```
+
+The single-string form remains fully supported and is unchanged:
+
+```yaml
+commands:
+  start:
+    cmd: "docker compose up -d"
+```
 
 ### Aliases
 

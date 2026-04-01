@@ -225,10 +225,10 @@ func expandServices(merged *MergedConfig) {
 			switch {
 			case !exists:
 				// No explicit command — insert the generated one.
-				merged.Commands[cmdName] = Command{Cmd: generatedCmd}
-			case existing.Cmd == "":
+				merged.Commands[cmdName] = Command{Cmd: NewStringOrList(generatedCmd)}
+			case existing.Cmd.IsEmpty():
 				// Explicit entry has no cmd — fill in the generated cmd, keep metadata.
-				existing.Cmd = generatedCmd
+				existing.Cmd = NewStringOrList(generatedCmd)
 				merged.Commands[cmdName] = existing
 			default:
 				// Explicit entry has its own cmd — leave it untouched.

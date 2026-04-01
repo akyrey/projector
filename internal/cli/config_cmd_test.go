@@ -24,7 +24,7 @@ func TestRunFilter_GlobMatchesProjects(t *testing.T) {
 		cfg := &config.Config{
 			Commands: map[string]config.Command{
 				// Use 'true' so the command always succeeds without output concerns.
-				"noop": {Cmd: "true"},
+				"noop": {Cmd: config.NewStringOrList("true")},
 			},
 		}
 		if err := config.SaveFile(filepath.Join(dir, config.LocalConfigName), cfg); err != nil {
@@ -83,7 +83,7 @@ func TestConfigEditDoesNotOverwriteExistingFile(t *testing.T) {
 	// Write a custom config.
 	original := &config.Config{
 		Commands: map[string]config.Command{
-			"build": {Cmd: "go build ./...", Description: "Build the project"},
+			"build": {Cmd: config.NewStringOrList("go build ./..."), Description: "Build the project"},
 		},
 	}
 	if err := config.SaveFile(cfgPath, original); err != nil {

@@ -20,7 +20,7 @@ func TestRunner_Run_Success(t *testing.T) {
 		Name: "test",
 		Dir:  t.TempDir(),
 		Command: config.Command{
-			Cmd: "echo hello",
+			Cmd: config.NewStringOrList("echo hello"),
 		},
 	}
 
@@ -42,7 +42,7 @@ func TestRunner_Run_Failure(t *testing.T) {
 		Name: "failing",
 		Dir:  t.TempDir(),
 		Command: config.Command{
-			Cmd: "exit 1",
+			Cmd: config.NewStringOrList("exit 1"),
 		},
 	}
 
@@ -60,7 +60,7 @@ func TestRunner_Run_EnvVar(t *testing.T) {
 		Name: "env-test",
 		Dir:  t.TempDir(),
 		Command: config.Command{
-			Cmd: "echo $MY_VAR",
+			Cmd: config.NewStringOrList("echo $MY_VAR"),
 			Env: map[string]string{
 				"MY_VAR": "secret-value",
 			},
@@ -85,7 +85,7 @@ func TestRunner_Run_DryRun(t *testing.T) {
 		Name: "dry-test",
 		Dir:  t.TempDir(),
 		Command: config.Command{
-			Cmd: "echo should-not-appear",
+			Cmd: config.NewStringOrList("echo should-not-appear"),
 		},
 		DryRun: true,
 	}
@@ -112,9 +112,9 @@ func TestRunner_RunConcurrent_AllSucceed(t *testing.T) {
 	r := runner.New(nil, &out, &out)
 
 	targets := []runner.Target{
-		{Name: "alpha", Dir: t.TempDir(), Command: config.Command{Cmd: "echo alpha-output"}},
-		{Name: "beta", Dir: t.TempDir(), Command: config.Command{Cmd: "echo beta-output"}},
-		{Name: "gamma", Dir: t.TempDir(), Command: config.Command{Cmd: "echo gamma-output"}},
+		{Name: "alpha", Dir: t.TempDir(), Command: config.Command{Cmd: config.NewStringOrList("echo alpha-output")}},
+		{Name: "beta", Dir: t.TempDir(), Command: config.Command{Cmd: config.NewStringOrList("echo beta-output")}},
+		{Name: "gamma", Dir: t.TempDir(), Command: config.Command{Cmd: config.NewStringOrList("echo gamma-output")}},
 	}
 
 	if err := r.RunConcurrent(context.Background(), targets); err != nil {
@@ -135,8 +135,8 @@ func TestRunner_RunConcurrent_OneFailure(t *testing.T) {
 	r := runner.New(nil, &out, &out)
 
 	targets := []runner.Target{
-		{Name: "ok", Dir: t.TempDir(), Command: config.Command{Cmd: "echo ok"}},
-		{Name: "fail", Dir: t.TempDir(), Command: config.Command{Cmd: "exit 1"}},
+		{Name: "ok", Dir: t.TempDir(), Command: config.Command{Cmd: config.NewStringOrList("echo ok")}},
+		{Name: "fail", Dir: t.TempDir(), Command: config.Command{Cmd: config.NewStringOrList("exit 1")}},
 	}
 
 	if err := r.RunConcurrent(context.Background(), targets); err == nil {
@@ -150,7 +150,7 @@ func TestRunner_RunConcurrent_SingleTarget(t *testing.T) {
 	r := runner.New(nil, &out, &out)
 
 	targets := []runner.Target{
-		{Name: "solo", Dir: t.TempDir(), Command: config.Command{Cmd: "echo solo-output"}},
+		{Name: "solo", Dir: t.TempDir(), Command: config.Command{Cmd: config.NewStringOrList("echo solo-output")}},
 	}
 
 	if err := r.RunConcurrent(context.Background(), targets); err != nil {
@@ -180,7 +180,7 @@ func TestRunner_Run_DotEnvLoaded(t *testing.T) {
 		Name: "dotenv-test",
 		Dir:  dir,
 		Command: config.Command{
-			Cmd: "echo $DOTENV_VAR",
+			Cmd: config.NewStringOrList("echo $DOTENV_VAR"),
 		},
 	}
 
@@ -208,7 +208,7 @@ func TestRunner_Run_CommandEnvOverridesDotEnv(t *testing.T) {
 		Name: "override-test",
 		Dir:  dir,
 		Command: config.Command{
-			Cmd: "echo $MY_VAR",
+			Cmd: config.NewStringOrList("echo $MY_VAR"),
 			Env: map[string]string{"MY_VAR": "from-command-env"},
 		},
 	}
@@ -235,7 +235,7 @@ func TestRunner_Run_PreconditionPass(t *testing.T) {
 		Name: "pre-pass",
 		Dir:  t.TempDir(),
 		Command: config.Command{
-			Cmd:           "echo ran",
+			Cmd:           config.NewStringOrList("echo ran"),
 			Preconditions: []string{"true"}, // always succeeds
 		},
 	}
@@ -257,7 +257,7 @@ func TestRunner_Run_PreconditionFail(t *testing.T) {
 		Name: "pre-fail",
 		Dir:  t.TempDir(),
 		Command: config.Command{
-			Cmd:           "echo should-not-run",
+			Cmd:           config.NewStringOrList("echo should-not-run"),
 			Preconditions: []string{"false"}, // always fails
 		},
 	}
@@ -280,7 +280,7 @@ func TestRunner_Run_ExtraArgs(t *testing.T) {
 		Name: "extra-args-test",
 		Dir:  t.TempDir(),
 		Command: config.Command{
-			Cmd: "echo",
+			Cmd: config.NewStringOrList("echo"),
 		},
 		ExtraArgs: []string{"--flag", "value"},
 	}
@@ -304,9 +304,9 @@ func TestRunner_Run_ExtraArgsNotPassedToDeps(t *testing.T) {
 	r := runner.New(nil, &out, &out)
 
 	commands := map[string]config.Command{
-		"dep": {Cmd: "echo dep-ran > " + markerFile},
+		"dep": {Cmd: config.NewStringOrList("echo dep-ran > " + markerFile)},
 		"main": {
-			Cmd:       "echo main-ran",
+			Cmd:       config.NewStringOrList("echo main-ran"),
 			DependsOn: []string{"dep"},
 		},
 	}
@@ -339,8 +339,8 @@ func TestRunner_RunConcurrent_Prefixes(t *testing.T) {
 	r := runner.New(nil, &out, &out)
 
 	targets := []runner.Target{
-		{Name: "proj-a", Dir: t.TempDir(), Command: config.Command{Cmd: "echo line-a"}},
-		{Name: "proj-b", Dir: t.TempDir(), Command: config.Command{Cmd: "echo line-b"}},
+		{Name: "proj-a", Dir: t.TempDir(), Command: config.Command{Cmd: config.NewStringOrList("echo line-a")}},
+		{Name: "proj-b", Dir: t.TempDir(), Command: config.Command{Cmd: config.NewStringOrList("echo line-b")}},
 	}
 
 	if err := r.RunConcurrent(context.Background(), targets); err != nil {
@@ -355,5 +355,137 @@ func TestRunner_RunConcurrent_Prefixes(t *testing.T) {
 	}
 	if !strings.Contains(combined, "proj-b") {
 		t.Errorf("expected 'proj-b' prefix in output; got:\n%s", combined)
+	}
+}
+
+// TestRunner_Run_ArrayCmd_AllSucceed verifies that an array cmd runs all steps in order.
+func TestRunner_Run_ArrayCmd_AllSucceed(t *testing.T) {
+	tmpDir := t.TempDir()
+	orderFile := tmpDir + "/order.txt"
+
+	var out bytes.Buffer
+	r := runner.New(nil, &out, &out)
+
+	tgt := runner.Target{
+		Name: "multi",
+		Dir:  tmpDir,
+		Command: config.Command{
+			Cmd: config.NewStringOrList(
+				"echo first >> "+orderFile,
+				"echo second >> "+orderFile,
+				"echo third >> "+orderFile,
+			),
+		},
+	}
+
+	if err := r.Run(context.Background(), tgt); err != nil {
+		t.Fatalf("Run array cmd: %v", err)
+	}
+
+	got, err := os.ReadFile(orderFile)
+	if err != nil {
+		t.Fatalf("read order file: %v", err)
+	}
+	want := "first\nsecond\nthird\n"
+	if string(got) != want {
+		t.Errorf("execution order = %q, want %q", string(got), want)
+	}
+}
+
+// TestRunner_Run_ArrayCmd_AbortsOnFailure verifies that a failing step stops the chain.
+func TestRunner_Run_ArrayCmd_AbortsOnFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	markerFile := tmpDir + "/ran.txt"
+
+	var out bytes.Buffer
+	r := runner.New(nil, &out, &out)
+
+	tgt := runner.Target{
+		Name: "multi-fail",
+		Dir:  tmpDir,
+		Command: config.Command{
+			Cmd: config.NewStringOrList(
+				"echo step1",
+				"exit 1",
+				"touch "+markerFile, // must NOT run
+			),
+		},
+	}
+
+	err := r.Run(context.Background(), tgt)
+	if err == nil {
+		t.Fatal("expected error from failing step, got nil")
+	}
+
+	if _, statErr := os.Stat(markerFile); !os.IsNotExist(statErr) {
+		t.Error("third command should not have run after second step failed")
+	}
+}
+
+// TestRunner_Run_ArrayCmd_ExtraArgsOnLastOnly verifies ExtraArgs go to the last cmd only.
+func TestRunner_Run_ArrayCmd_ExtraArgsOnLastOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	firstFile := tmpDir + "/first.txt"
+	lastFile := tmpDir + "/last.txt"
+
+	var out bytes.Buffer
+	r := runner.New(nil, &out, &out)
+
+	tgt := runner.Target{
+		Name: "multi-extra",
+		Dir:  tmpDir,
+		Command: config.Command{
+			// First cmd writes its args to firstFile; last cmd writes to lastFile.
+			Cmd: config.NewStringOrList(
+				"echo no-extra > "+firstFile,
+				"echo",
+			),
+		},
+		ExtraArgs: []string{"got-extra", ">" + lastFile},
+	}
+
+	if err := r.Run(context.Background(), tgt); err != nil {
+		t.Fatalf("Run array cmd with extra args: %v", err)
+	}
+
+	// first.txt should contain "no-extra" (ExtraArgs were NOT appended).
+	firstContent, err := os.ReadFile(firstFile)
+	if err != nil {
+		t.Fatalf("read first file: %v", err)
+	}
+	if strings.Contains(string(firstContent), "got-extra") {
+		t.Errorf("ExtraArgs leaked into first command; first.txt: %q", string(firstContent))
+	}
+}
+
+// TestRunner_Run_ArrayCmd_DryRun verifies dry-run prints each command separately.
+func TestRunner_Run_ArrayCmd_DryRun(t *testing.T) {
+	var out bytes.Buffer
+	r := runner.New(nil, &out, &out)
+
+	tgt := runner.Target{
+		Name: "dry-multi",
+		Dir:  t.TempDir(),
+		Command: config.Command{
+			Cmd: config.NewStringOrList("sail down", "sail up -d"),
+		},
+		DryRun: true,
+	}
+
+	if err := r.Run(context.Background(), tgt); err != nil {
+		t.Fatalf("Run dry array: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "sail down") {
+		t.Errorf("expected 'sail down' in dry-run output; got: %q", got)
+	}
+	if !strings.Contains(got, "sail up -d") {
+		t.Errorf("expected 'sail up -d' in dry-run output; got: %q", got)
+	}
+	// Should have two separate [dry-run] lines, not one joined line.
+	dryRunCount := strings.Count(got, "[dry-run]")
+	if dryRunCount < 2 {
+		t.Errorf("expected at least 2 [dry-run] lines for array cmd; got %d in: %q", dryRunCount, got)
 	}
 }

@@ -104,7 +104,7 @@ Examples:
 			}
 
 			definition := config.Command{
-				Cmd:           shellCmd,
+				Cmd:           config.NewStringOrList(shellCmd),
 				Description:   description,
 				Env:           env,
 				DependsOn:     dependsOn,
@@ -309,13 +309,13 @@ func ensureConfigExists(path string, global bool) error {
 				"example": {Path: "/path/to/project"},
 			},
 			Commands: map[string]config.Command{
-				"start": {Cmd: "echo hello", Description: "Start the project"},
+				"start": {Cmd: config.NewStringOrList("echo hello"), Description: "Start the project"},
 			},
 		}
 	} else {
 		skeleton = config.Config{
 			Commands: map[string]config.Command{
-				"start": {Cmd: "echo hello", Description: "Start the project"},
+				"start": {Cmd: config.NewStringOrList("echo hello"), Description: "Start the project"},
 			},
 		}
 	}

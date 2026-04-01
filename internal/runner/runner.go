@@ -200,11 +200,12 @@ func (r *Runner) RunConcurrent(ctx context.Context, targets []Target) error {
 func (r *Runner) runTarget(ctx context.Context, t Target, inR io.Reader, outW, errW io.Writer) error {
 	shell, flag := shellAndFlag()
 
-	// Build the final shell command string. Extra args are appended verbatim
-	// after the configured command, separated by a space.
-	shellCmd := t.Command.Cmd
-	if len(t.ExtraArgs) > 0 {
-		shellCmd = shellCmd + " " + strings.Join(t.ExtraArgs, " ")
+	// Resolve the list of shell command strings.
+	// ExtraArgs are appended only to the last command in the list.
+	cmds := t.Command.Cmd.Values()
+	if len(cmds) == 0 {
+		// Nothing to run — treat as a no-op (e.g. service metadata-only entry).
+		return nil
 	}
 
 	// Build env: process env → .env file → command-specific vars (highest priority).
@@ -231,14 +232,19 @@ func (r *Runner) runTarget(ctx context.Context, t Target, inR io.Reader, outW, e
 	}
 
 	if t.DryRun {
-		// Print preconditions and the command; don't execute anything.
+		// Print preconditions and each command in the list; don't execute anything.
 		for _, pre := range t.Command.Preconditions {
 			if _, err := fmt.Fprintf(outW, "[dry-run] %s: precondition: %s %s %q\n", label, shell, flag, pre); err != nil {
 				return err
 			}
 		}
-		if _, err := fmt.Fprintf(outW, "[dry-run] %s: %s %s %q\n", label, shell, flag, shellCmd); err != nil {
-			return err
+		for i, shellCmd := range cmds {
+			if i == len(cmds)-1 && len(t.ExtraArgs) > 0 {
+				shellCmd = shellCmd + " " + strings.Join(t.ExtraArgs, " ")
+			}
+			if _, err := fmt.Fprintf(outW, "[dry-run] %s: %s %s %q\n", label, shell, flag, shellCmd); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -256,15 +262,23 @@ func (r *Runner) runTarget(ctx context.Context, t Target, inR io.Reader, outW, e
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, shell, flag, shellCmd)
-	cmd.Dir = t.Dir
-	cmd.Stdin = inR
-	cmd.Stdout = outW
-	cmd.Stderr = errW
-	cmd.Env = baseEnv
+	// Execute each command in order, aborting on first failure.
+	// ExtraArgs are appended only to the last command.
+	for i, shellCmd := range cmds {
+		if i == len(cmds)-1 && len(t.ExtraArgs) > 0 {
+			shellCmd = shellCmd + " " + strings.Join(t.ExtraArgs, " ")
+		}
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("command %q failed: %w", shellCmd, err)
+		cmd := exec.CommandContext(ctx, shell, flag, shellCmd)
+		cmd.Dir = t.Dir
+		cmd.Stdin = inR
+		cmd.Stdout = outW
+		cmd.Stderr = errW
+		cmd.Env = baseEnv
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("command %q failed: %w", shellCmd, err)
+		}
 	}
 
 	return nil

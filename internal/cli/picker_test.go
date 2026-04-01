@@ -14,8 +14,8 @@ func TestChoose_SelectByNumber(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{
 		Commands: map[string]config.Command{
-			"build": {Cmd: "go build ./...", Description: "Build the project"},
-			"start": {Cmd: "echo start"},
+			"build": {Cmd: config.NewStringOrList("go build ./..."), Description: "Build the project"},
+			"start": {Cmd: config.NewStringOrList("echo start")},
 		},
 	}
 	if err := config.SaveFile(filepath.Join(dir, config.LocalConfigName), cfg); err != nil {
@@ -49,8 +49,8 @@ func TestChoose_SelectByName(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{
 		Commands: map[string]config.Command{
-			"build": {Cmd: "true"},
-			"start": {Cmd: "true"},
+			"build": {Cmd: config.NewStringOrList("true")},
+			"start": {Cmd: config.NewStringOrList("true")},
 		},
 	}
 	if err := config.SaveFile(filepath.Join(dir, config.LocalConfigName), cfg); err != nil {
@@ -72,7 +72,7 @@ func TestChoose_InvalidNumberReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{
 		Commands: map[string]config.Command{
-			"build": {Cmd: "true"},
+			"build": {Cmd: config.NewStringOrList("true")},
 		},
 	}
 	if err := config.SaveFile(filepath.Join(dir, config.LocalConfigName), cfg); err != nil {
@@ -94,9 +94,9 @@ func TestChoose_PrefixMatch(t *testing.T) {
 	dir := t.TempDir()
 	cfg := &config.Config{
 		Commands: map[string]config.Command{
-			"build":   {Cmd: "true"},
-			"backend": {Cmd: "true"},
-			"start":   {Cmd: "true"},
+			"build":   {Cmd: config.NewStringOrList("true")},
+			"backend": {Cmd: config.NewStringOrList("true")},
+			"start":   {Cmd: config.NewStringOrList("true")},
 		},
 	}
 	if err := config.SaveFile(filepath.Join(dir, config.LocalConfigName), cfg); err != nil {

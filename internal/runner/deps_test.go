@@ -18,7 +18,7 @@ func commands(pairs ...string) map[string]config.Command {
 	}
 	m := make(map[string]config.Command, len(pairs)/2)
 	for i := 0; i < len(pairs); i += 2 {
-		m[pairs[i]] = config.Command{Cmd: pairs[i+1]}
+		m[pairs[i]] = config.Command{Cmd: config.NewStringOrList(pairs[i+1])}
 	}
 	return m
 }
@@ -31,7 +31,7 @@ func commandsWithDeps(defs []struct {
 }) map[string]config.Command {
 	m := make(map[string]config.Command, len(defs))
 	for _, d := range defs {
-		m[d.name] = config.Command{Cmd: d.cmd, DependsOn: d.deps}
+		m[d.name] = config.Command{Cmd: config.NewStringOrList(d.cmd), DependsOn: d.deps}
 	}
 	return m
 }

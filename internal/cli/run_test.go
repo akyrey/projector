@@ -19,7 +19,7 @@ func TestCrossProjectDep_RunsBeforeMain(t *testing.T) {
 
 	libCfg := &config.Config{
 		Commands: map[string]config.Command{
-			"build": {Cmd: "touch " + markerFile},
+			"build": {Cmd: config.NewStringOrList("touch " + markerFile)},
 		},
 	}
 	if err := config.SaveFile(filepath.Join(libDir, config.LocalConfigName), libCfg); err != nil {
@@ -32,7 +32,7 @@ func TestCrossProjectDep_RunsBeforeMain(t *testing.T) {
 	appCfg := &config.Config{
 		Commands: map[string]config.Command{
 			"deploy": {
-				Cmd:       "test -f " + markerFile,
+				Cmd:       config.NewStringOrList("test -f " + markerFile),
 				DependsOn: []string{"^lib:build"},
 			},
 		},
@@ -72,7 +72,7 @@ func TestCrossProjectDep_MalformedEntryReturnsError(t *testing.T) {
 	cfg := &config.Config{
 		Commands: map[string]config.Command{
 			"start": {
-				Cmd:       "echo start",
+				Cmd:       config.NewStringOrList("echo start"),
 				DependsOn: []string{"^bad-format"}, // missing :cmd
 			},
 		},
@@ -96,7 +96,7 @@ func TestCrossProjectDep_DryRun(t *testing.T) {
 
 	libCfg := &config.Config{
 		Commands: map[string]config.Command{
-			"build": {Cmd: "touch " + markerFile},
+			"build": {Cmd: config.NewStringOrList("touch " + markerFile)},
 		},
 	}
 	if err := config.SaveFile(filepath.Join(libDir, config.LocalConfigName), libCfg); err != nil {
@@ -107,7 +107,7 @@ func TestCrossProjectDep_DryRun(t *testing.T) {
 	appCfg := &config.Config{
 		Commands: map[string]config.Command{
 			"deploy": {
-				Cmd:       "echo deploying",
+				Cmd:       config.NewStringOrList("echo deploying"),
 				DependsOn: []string{"^lib:build"},
 			},
 		},
@@ -146,7 +146,7 @@ func TestCrossProjectDep_Cycle(t *testing.T) {
 	aCfg := &config.Config{
 		Commands: map[string]config.Command{
 			"start": {
-				Cmd:       "echo a",
+				Cmd:       config.NewStringOrList("echo a"),
 				DependsOn: []string{"^b:start"},
 			},
 		},
@@ -154,7 +154,7 @@ func TestCrossProjectDep_Cycle(t *testing.T) {
 	bCfg := &config.Config{
 		Commands: map[string]config.Command{
 			"start": {
-				Cmd:       "echo b",
+				Cmd:       config.NewStringOrList("echo b"),
 				DependsOn: []string{"^a:start"},
 			},
 		},
@@ -199,13 +199,13 @@ func TestCrossProjectDep_ThreeHop(t *testing.T) {
 
 	cCfg := &config.Config{
 		Commands: map[string]config.Command{
-			"compile": {Cmd: "echo c >> " + orderFile},
+			"compile": {Cmd: config.NewStringOrList("echo c >> " + orderFile)},
 		},
 	}
 	bCfg := &config.Config{
 		Commands: map[string]config.Command{
 			"build": {
-				Cmd:       "echo b >> " + orderFile,
+				Cmd:       config.NewStringOrList("echo b >> " + orderFile),
 				DependsOn: []string{"^c:compile"},
 			},
 		},
@@ -213,7 +213,7 @@ func TestCrossProjectDep_ThreeHop(t *testing.T) {
 	aCfg := &config.Config{
 		Commands: map[string]config.Command{
 			"deploy": {
-				Cmd:       "echo a >> " + orderFile,
+				Cmd:       config.NewStringOrList("echo a >> " + orderFile),
 				DependsOn: []string{"^b:build"},
 			},
 		},
@@ -262,7 +262,7 @@ func TestCrossProjectDep_UnregisteredProject(t *testing.T) {
 	appCfg := &config.Config{
 		Commands: map[string]config.Command{
 			"start": {
-				Cmd:       "echo start",
+				Cmd:       config.NewStringOrList("echo start"),
 				DependsOn: []string{"^ghost:build"},
 			},
 		},
@@ -291,7 +291,7 @@ func TestCrossProjectDep_UnknownCommand(t *testing.T) {
 	libDir := t.TempDir()
 	libCfg := &config.Config{
 		Commands: map[string]config.Command{
-			"build": {Cmd: "echo build"},
+			"build": {Cmd: config.NewStringOrList("echo build")},
 		},
 	}
 	if err := config.SaveFile(filepath.Join(libDir, config.LocalConfigName), libCfg); err != nil {
@@ -302,7 +302,7 @@ func TestCrossProjectDep_UnknownCommand(t *testing.T) {
 	appCfg := &config.Config{
 		Commands: map[string]config.Command{
 			"start": {
-				Cmd:       "echo start",
+				Cmd:       config.NewStringOrList("echo start"),
 				DependsOn: []string{"^lib:nonexistent"},
 			},
 		},
@@ -336,7 +336,7 @@ func TestCrossProjectDep_DeduplicatedAcrossProjects(t *testing.T) {
 	libCfg := &config.Config{
 		Commands: map[string]config.Command{
 			// Appends a line to the counter file each time it runs.
-			"build": {Cmd: "echo x >> " + counterFile},
+			"build": {Cmd: config.NewStringOrList("echo x >> " + counterFile)},
 		},
 	}
 	if err := config.SaveFile(filepath.Join(libDir, config.LocalConfigName), libCfg); err != nil {
@@ -349,7 +349,7 @@ func TestCrossProjectDep_DeduplicatedAcrossProjects(t *testing.T) {
 		cfg := &config.Config{
 			Commands: map[string]config.Command{
 				"start": {
-					Cmd:       "echo start",
+					Cmd:       config.NewStringOrList("echo start"),
 					DependsOn: []string{"^lib:build"},
 				},
 			},
@@ -393,7 +393,7 @@ func TestCrossProjectDep_CwdMode(t *testing.T) {
 
 	libCfg := &config.Config{
 		Commands: map[string]config.Command{
-			"prepare": {Cmd: "touch " + markerFile},
+			"prepare": {Cmd: config.NewStringOrList("touch " + markerFile)},
 		},
 	}
 	if err := config.SaveFile(filepath.Join(libDir, config.LocalConfigName), libCfg); err != nil {
@@ -404,7 +404,7 @@ func TestCrossProjectDep_CwdMode(t *testing.T) {
 	appCfg := &config.Config{
 		Commands: map[string]config.Command{
 			"start": {
-				Cmd:       "test -f " + markerFile,
+				Cmd:       config.NewStringOrList("test -f " + markerFile),
 				DependsOn: []string{"^lib:prepare"},
 			},
 		},
