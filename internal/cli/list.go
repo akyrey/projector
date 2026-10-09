@@ -87,6 +87,11 @@ Example:
 						return err
 					}
 				}
+				for _, step := range c.Once {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "    once: %s: %s\n", step.ID, step.Cmd.String()); err != nil {
+						return err
+					}
+				}
 			}
 
 			return nil

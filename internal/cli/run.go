@@ -157,12 +157,18 @@ func runInCwd(d *deps, cmdName string, extraArgs []string, dryRun bool) error {
 	localCmd := cmd
 	localCmd.DependsOn = localDeps
 
+	followUps, err := d.onceFollowUps(pwd, cmdName, cmd)
+	if err != nil {
+		return err
+	}
+
 	t := runner.Target{
 		Name:      cmdName,
 		Dir:       pwd,
 		Command:   localCmd,
 		ExtraArgs: extraArgs,
 		DryRun:    dryRun,
+		FollowUps: followUps,
 	}
 
 	if len(localDeps) > 0 {
@@ -224,6 +230,11 @@ func runInProjects(d *deps, cmdName string, projectNames []string, extraArgs []s
 		localCmd := cmd
 		localCmd.DependsOn = localDeps
 
+		followUps, err := d.onceFollowUps(proj.Path, cmdName, cmd)
+		if err != nil {
+			return fmt.Errorf("project %q: %w", name, err)
+		}
+
 		pts = append(pts, projectTarget{
 			target: runner.Target{
 				Name:      name,
@@ -231,6 +242,7 @@ func runInProjects(d *deps, cmdName string, projectNames []string, extraArgs []s
 				Command:   localCmd,
 				ExtraArgs: extraArgs,
 				DryRun:    dryRun,
+				FollowUps: followUps,
 			},
 			commands: patchCommandMap(merged.Commands, cmdName, localCmd),
 		})
@@ -345,21 +357,39 @@ func partitionDeps(dependsOn []string) (cross []crossDep, local []string, err er
 // ErrCrossProjectCycle is returned when cross-project depends_on entries form a cycle.
 var ErrCrossProjectCycle = errors.New("cross-project cyclic dependency detected")
 
+// crossDepWalk tracks cross-project deps during one invocation, keyed by
+// "proj\x00cmd". inProgress holds the current recursion path (for cycle
+// detection); done holds every dep that already ran, so a dep reachable through
+// several paths (a diamond) runs only once.
+type crossDepWalk struct {
+	inProgress map[string]struct{}
+	done       map[string]struct{}
+}
+
+func newCrossDepWalk() *crossDepWalk {
+	return &crossDepWalk{
+		inProgress: make(map[string]struct{}),
+		done:       make(map[string]struct{}),
+	}
+}
+
 // runCrossProjectDeps resolves and runs each cross-project dep sequentially.
-// Each dep is run in its registered project's directory.
-// visited tracks in-progress nodes (keyed by "proj\x00cmd") to detect cycles.
-// Pass nil on the first call; the map is allocated lazily.
-func runCrossProjectDeps(d *deps, deps []crossDep, dryRun bool, visited map[string]struct{}) error {
-	if visited == nil {
-		visited = make(map[string]struct{})
+// Each dep is run in its registered project's directory, after its own
+// cross-project deps. Pass nil for walk on the first call.
+func runCrossProjectDeps(d *deps, deps []crossDep, dryRun bool, walk *crossDepWalk) error {
+	if walk == nil {
+		walk = newCrossDepWalk()
 	}
 
 	for _, cd := range deps {
 		key := cd.projName + "\x00" + cd.cmdName
-		if _, seen := visited[key]; seen {
+		if _, ran := walk.done[key]; ran {
+			continue
+		}
+		if _, active := walk.inProgress[key]; active {
 			return fmt.Errorf("%w: %s:%s", ErrCrossProjectCycle, cd.projName, cd.cmdName)
 		}
-		visited[key] = struct{}{}
+		walk.inProgress[key] = struct{}{}
 
 		proj, err := d.registry.Get(cd.projName)
 		if err != nil {
@@ -384,20 +414,26 @@ func runCrossProjectDeps(d *deps, deps []crossDep, dryRun bool, visited map[stri
 		if err != nil {
 			return fmt.Errorf("cross-project dep %q/%q: %w", cd.projName, cd.cmdName, err)
 		}
-		if err := runCrossProjectDeps(d, subCross, dryRun, visited); err != nil {
+		if err := runCrossProjectDeps(d, subCross, dryRun, walk); err != nil {
 			return err
 		}
 
-		delete(visited, key)
+		delete(walk.inProgress, key)
 
 		localCmd := cmd
 		localCmd.DependsOn = localDeps
 
+		followUps, err := d.onceFollowUps(proj.Path, cd.cmdName, cmd)
+		if err != nil {
+			return fmt.Errorf("cross-project dep %q/%q: %w", cd.projName, cd.cmdName, err)
+		}
+
 		t := runner.Target{
-			Name:    fmt.Sprintf("%s/%s", cd.projName, cd.cmdName),
-			Dir:     proj.Path,
-			Command: localCmd,
-			DryRun:  dryRun,
+			Name:      fmt.Sprintf("%s/%s", cd.projName, cd.cmdName),
+			Dir:       proj.Path,
+			Command:   localCmd,
+			DryRun:    dryRun,
+			FollowUps: followUps,
 		}
 
 		if len(localDeps) > 0 {
@@ -410,6 +446,7 @@ func runCrossProjectDeps(d *deps, deps []crossDep, dryRun bool, visited map[stri
 				return fmt.Errorf("cross-project dep %q/%q: %w", cd.projName, cd.cmdName, err)
 			}
 		}
+		walk.done[key] = struct{}{}
 	}
 	return nil
 }

@@ -142,6 +142,10 @@ commands:
 | `depends_on` | list | Other command names that must complete (successfully) before this one runs |
 | `aliases` | list | Alternative names that invoke the same command |
 | `preconditions` | list | Shell expressions that must exit 0 before the command runs |
+| `once` | list | Steps that run after `cmd`, each at most once per machine (see [Once steps](#once-steps)) |
+
+A config file can also list `exclude`: command names inherited from farther
+configs that do not apply here (see [Excluding inherited commands](#excluding-inherited-commands)).
 
 ### Multi-step commands
 
@@ -268,6 +272,70 @@ Multiple services can be defined, and they follow the same config hierarchy as
 commands — a closer (more specific) service definition overrides a farther one
 with the same name.
 
+### Shared defaults and excluding inherited commands
+
+Because every `.projector.yaml` from `/` down to the project is merged, a file in
+a folder that holds several repos (e.g. `~/work/.projector.yaml`) is a good place
+for defaults they share, without leaking them into unrelated projects the way
+the global config would. Each repo then only overrides what differs.
+
+#### Excluding inherited commands
+
+`exclude` removes commands inherited from farther configs, both explicit and
+service-generated ones, for example in a repo that does not use the shared
+container tooling:
+
+```yaml
+# ~/work/webshop/.projector.yaml
+exclude: [xdebug, migrate, artisan, composer]
+
+commands:
+  start:
+    cmd: pnpm next
+```
+
+Aliases of an excluded command are removed too. A closer config can define an
+excluded command again with an explicit `commands` entry (a closer service
+generating that name does not bring it back).
+
+### Once steps
+
+`once` lists steps that run after a command's `cmd`, each at most once per
+machine. It is meant for one-off actions every developer must apply after
+pulling a change (a data backfill, a re-seed...), alongside the steps that are
+safe to repeat:
+
+```yaml
+commands:
+  update:
+    cmd:                        # runs every time
+      - ./xenv composer install
+      - ./xenv artisan migrate
+    once:                       # runs once per machine, in order
+      - id: 2026-10-09-backfill-wallets
+        description: Backfill wallet balances
+        cmd: ./xenv artisan wallets:backfill
+```
+
+- A step is recorded as applied only when it succeeds; a failing step stops the
+  remaining ones and runs again next time.
+- Applied steps are recorded per project and command under
+  `$XDG_STATE_HOME/projector` (default `~/.local/state/projector`), never in the
+  repository. The project is the nearest directory with a `.projector.yaml`
+  (symlinks resolved), so running from a subdirectory, through a symlink, by
+  project name, or through an alias all share the same record.
+- Make steps safe to re-run where you can: a step whose `cmd` fails halfway is
+  not recorded and starts over next time.
+- Only the command you invoke runs its once steps; those of its `depends_on`
+  commands are not run.
+- Avoid running the same command in the same project from two terminals at
+  once: both may run a pending step.
+- `id` must be unique within the command and must not change once published, or
+  the step runs again. A date prefix keeps IDs unique and readable. Remove old
+  steps once everyone has applied them, so fresh setups don't replay them.
+- `--dry-run` prints pending steps without running or recording them.
+- `projector status` shows how many steps are pending in each project.
+
 ## Usage
 
 ### Running commands
@@ -325,7 +393,7 @@ commands:
 
 The syntax is `^<project-name>:<command-name>`. The project must be registered via `projector project add`.
 
-Cross-project deps run **before** the local dep chain and the main command. When multiple projects are run concurrently and they share the same cross-project dep, it is deduplicated and runs only once.
+Cross-project deps run **before** the local dep chain and the main command. Each cross-project dep runs at most once per invocation, even when several projects share it or it is reachable through several transitive paths.
 
 Transitive cross-project deps are supported: if `^lib:build` itself depends on `^shared:compile`, the chain resolves correctly (`shared:compile → lib:build → deploy`). Cycles across projects are detected and reported as an error.
 
@@ -360,6 +428,24 @@ projector config edit --global  # global config
 # Inspect the fully resolved (merged) config for the current directory
 projector config show
 ```
+
+### Project status
+
+```bash
+projector status                   # all registered projects
+projector status core-api webshop  # only these
+```
+
+```
+PROJECT   BRANCH        GIT                CONTAINERS   ONCE STEPS
+api       main          ↓2 3 changed       3/3 running  1 pending
+proxy     -             not a git repo     2/2 running  -
+```
+
+- **GIT**: commits ahead (↑) / behind (↓) upstream and uncommitted changes.
+- **CONTAINERS**: docker compose containers whose project directory is the
+  project path (`?` when docker is unavailable).
+- **ONCE STEPS**: [once steps](#once-steps) not yet applied on this machine.
 
 ### Listing resolved commands
 
@@ -418,18 +504,25 @@ projector/
 │   │   ├── root.go             # root command, global --pwd flag, shorthand dispatch
 │   │   ├── run.go              # `projector run` + shared runCommand logic
 │   │   ├── list.go             # `projector list`
+│   │   ├── status.go           # `projector status`
+│   │   ├── once.go             # once steps → runner follow-ups + state recording
 │   │   ├── project.go          # `projector project add/remove/list`
 │   │   ├── config_cmd.go       # `projector config edit/set/remove/show`
 │   │   ├── completion.go       # `projector completion`
 │   │   └── context.go          # SIGINT/SIGTERM cancellation context
 │   ├── config/
-│   │   ├── types.go            # Config, Command, Project, MergedConfig types
+│   │   ├── types.go            # Config, Command, OnceStep, Project, MergedConfig types
+│   │   ├── once.go             # once step validation + pending filter
 │   │   ├── file.go             # LoadFile / SaveFile / GlobalConfigPath
 │   │   └── loader.go           # hierarchical load + merge (global → ancestors → cwd)
 │   ├── project/
 │   │   └── registry.go         # add/remove/get/list projects in global config
+│   ├── state/
+│   │   └── store.go            # per-machine record of applied once steps
+│   ├── status/
+│   │   └── status.go           # git / docker / once-step status table
 │   ├── runner/
-│   │   ├── runner.go           # Run, RunConcurrent, RunWithDeps, RunConcurrentWithDeps
+│   │   ├── runner.go           # Run, RunConcurrent, RunWithDeps, RunConcurrentWithDeps, follow-ups
 │   │   ├── deps.go             # topological sort + cycle detection for depends_on
 │   │   └── output.go           # thread-safe prefixed + colored output writer
 │   └── editor/

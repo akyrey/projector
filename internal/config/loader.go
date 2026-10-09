@@ -63,6 +63,10 @@ func (l *Loader) Load(pwd string) (*MergedConfig, error) {
 	// 4. Expand service definitions into commands now that all layers are merged.
 	expandServices(merged)
 
+	if err := validateOnceSteps(merged.Commands); err != nil {
+		return nil, err
+	}
+
 	return merged, nil
 }
 
@@ -70,6 +74,31 @@ func (l *Loader) Load(pwd string) (*MergedConfig, error) {
 // This is the same as Load but provides a more descriptive call site.
 func (l *Loader) LoadForProject(projectPath string) (*MergedConfig, error) {
 	return l.Load(projectPath)
+}
+
+// ProjectRoot returns the directory a command run from dir belongs to: the
+// nearest directory at or above dir holding a .projector.yaml, with symlinks
+// resolved. If there is none, it returns dir itself (resolved). Use it to key
+// per-project state so runs from subdirectories or symlinked paths agree.
+func (l *Loader) ProjectRoot(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("abs path: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolve symlinks: %w", err)
+	}
+	for curr := resolved; ; {
+		if _, err := os.Stat(filepath.Join(curr, LocalConfigName)); err == nil {
+			return curr, nil
+		}
+		parent := filepath.Dir(curr)
+		if parent == curr {
+			return resolved, nil
+		}
+		curr = parent
+	}
 }
 
 // GlobalPath returns the path to the global config file.
@@ -167,6 +196,10 @@ func dirChain(pwd string) ([]string, error) {
 // Commands, projects, and services from src override those in dst with the same key.
 // For each command that declares aliases, each alias is also registered in dst
 // pointing to the same definition (with Aliases cleared to avoid confusion).
+// Names in src.Exclude are then removed from dst together with their aliases,
+// so within one file an exclusion wins over a definition of the same name.
+// Only an explicit command in a closer file defines an excluded name again;
+// a closer service generating that name does not.
 func mergeInto(dst *MergedConfig, src *Config) {
 	if src == nil {
 		return
@@ -178,6 +211,7 @@ func mergeInto(dst *MergedConfig, src *Config) {
 
 	for name, cmd := range src.Commands {
 		dst.Commands[name] = cmd
+		delete(dst.excluded, name)
 
 		// Register each alias as its own entry so `projector run <alias>` works.
 		for _, alias := range cmd.Aliases {
@@ -186,12 +220,24 @@ func mergeInto(dst *MergedConfig, src *Config) {
 			}
 			aliasCmd := cmd
 			aliasCmd.Aliases = nil // aliases of aliases are not expanded
+			aliasCmd.AliasOf = name
 			dst.Commands[alias] = aliasCmd
+			delete(dst.excluded, alias)
 		}
 	}
 
 	for name, svc := range src.Services {
 		dst.Services[name] = svc
+	}
+
+	for _, name := range src.Exclude {
+		delete(dst.Commands, name)
+		dst.excluded[name] = struct{}{}
+		for alias, cmd := range dst.Commands {
+			if cmd.AliasOf == name {
+				delete(dst.Commands, alias)
+			}
+		}
 	}
 }
 
@@ -210,6 +256,8 @@ func mergeInto(dst *MergedConfig, src *Config) {
 //     Cmd is filled in and all other fields (description, env, depends_on, etc.)
 //     from the explicit entry are preserved. This lets callers add metadata to
 //     a service-generated command without repeating the exec prefix.
+//
+// Names removed by an Exclude entry (and not defined again closer) are skipped.
 func expandServices(merged *MergedConfig) {
 	for _, svc := range merged.Services {
 		if svc.Exec == "" {
@@ -222,6 +270,9 @@ func expandServices(merged *MergedConfig) {
 			}
 
 			existing, exists := merged.Commands[cmdName]
+			if _, excluded := merged.excluded[cmdName]; excluded && !exists {
+				continue
+			}
 			switch {
 			case !exists:
 				// No explicit command — insert the generated one.

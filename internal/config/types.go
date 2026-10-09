@@ -111,6 +111,29 @@ type Command struct {
 	// Preconditions is a list of shell expressions that must all exit 0 before
 	// this command runs. If any fails, execution is aborted with an error.
 	Preconditions []string `yaml:"preconditions,omitempty"`
+
+	// Once lists steps that run after Cmd, each at most once per machine.
+	// Applied step IDs are recorded outside the repo (see internal/state).
+	Once []OnceStep `yaml:"once,omitempty"`
+
+	// AliasOf is set on the merged entries registered for aliases: it holds
+	// the canonical command name. Never read from or written to YAML.
+	AliasOf string `yaml:"-"`
+}
+
+// OnceStep is a step that runs at most once per machine, e.g. a one-off data
+// fix that every developer must apply after pulling a change.
+type OnceStep struct {
+	// ID identifies the step; it must be unique within its command and must not
+	// change once published, or the step runs again. A date prefix keeps IDs
+	// unique and ordered, e.g. "2026-10-09-backfill-wallets".
+	ID string `yaml:"id"`
+
+	// Description is a human-readable summary shown when the step runs.
+	Description string `yaml:"description,omitempty"`
+
+	// Cmd is the shell command (or ordered list of commands) to execute.
+	Cmd StringOrList `yaml:"cmd"`
 }
 
 // Service defines a container execution context that auto-generates commands.
@@ -161,6 +184,11 @@ type Config struct {
 	// Each service auto-generates commands by prepending Exec to each command suffix.
 	// Closer (more specific) configs override farther ones for the same service name.
 	Services map[string]Service `yaml:"services,omitempty"`
+
+	// Exclude lists command names inherited from farther configs (explicit or
+	// service-generated) that are removed from this context. A closer config
+	// can define an excluded command again.
+	Exclude []string `yaml:"exclude,omitempty"`
 }
 
 // MergedConfig is the result of merging multiple Config layers.
@@ -169,6 +197,10 @@ type MergedConfig struct {
 	Projects map[string]Project
 	Commands map[string]Command
 	Services map[string]Service
+
+	// excluded holds command names removed by an Exclude entry and not defined
+	// again by a closer config; service expansion skips them.
+	excluded map[string]struct{}
 }
 
 // NewMergedConfig creates an empty MergedConfig with initialized maps.
@@ -177,5 +209,6 @@ func NewMergedConfig() *MergedConfig {
 		Projects: make(map[string]Project),
 		Commands: make(map[string]Command),
 		Services: make(map[string]Service),
+		excluded: make(map[string]struct{}),
 	}
 }

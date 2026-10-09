@@ -31,6 +31,8 @@ internal/
   config/                   # types, file I/O, hierarchical loader + merge
   project/                  # project registry (reads/writes global config)
   runner/                   # command execution + depends_on resolution
+  state/                    # machine-local state (applied once steps)
+  status/                   # git / docker / once-step status for `projector status`
   editor/                   # $EDITOR integration
 ```
 
@@ -46,8 +48,12 @@ application code (not intended to be imported by external packages).
   algorithm. It has no knowledge of CLI flags or execution.
 - **`internal/runner`** is pure execution: no config loading, no project
   registry lookups. It receives already-resolved `Target` structs.
-- Dependencies flow inward: `cli → config, project, runner, editor`. Inner
-  packages (`config`, `runner`) must not import `cli`.
+- **`internal/state`** stores machine-local data outside repos, one file per
+  project dir under `$XDG_STATE_HOME/projector`. It knows nothing of config.
+- **`internal/status`** gathers git and docker state; pending once-step counts
+  come in through an injected `PendingFunc`, so it imports neither config nor state.
+- Dependencies flow inward: `cli → config, project, runner, editor, state, status`.
+  Inner packages (`config`, `runner`, `state`, `status`) must not import `cli`.
 
 ## Config types
 
@@ -72,6 +78,7 @@ type Config struct {
     Projects map[string]Project `yaml:"projects,omitempty"` // global only
     Commands map[string]Command `yaml:"commands,omitempty"`
     Services map[string]Service `yaml:"services,omitempty"`
+    Exclude  []string           `yaml:"exclude,omitempty"` // drop inherited commands
 }
 
 type Command struct {
@@ -81,6 +88,14 @@ type Command struct {
     DependsOn     []string          `yaml:"depends_on,omitempty"`
     Aliases       []string          `yaml:"aliases,omitempty"`
     Preconditions []string          `yaml:"preconditions,omitempty"`
+    Once          []OnceStep        `yaml:"once,omitempty"`
+}
+
+// OnceStep runs after Cmd at most once per machine (see "Once steps").
+type OnceStep struct {
+    ID          string       `yaml:"id"`
+    Description string       `yaml:"description,omitempty"`
+    Cmd         StringOrList `yaml:"cmd"`
 }
 
 type Project struct {
@@ -104,8 +119,17 @@ type MergedConfig struct {
 Merge semantics: later (closer) entries override earlier ones for the same key.
 Merging happens in `config.mergeInto` (`internal/config/loader.go`).
 
+Alias entries in the merged map carry `AliasOf` (the canonical name, `yaml:"-"`).
+
+`Exclude` names are applied after the same file's commands: they delete the
+command and its aliases from the merged map and are remembered in
+`MergedConfig.excluded`, so `expandServices` skips them too. Only an explicit
+command in a closer layer clears the exclusion; a closer service does not.
+
 After all layers are merged, `expandServices` is called in `Load` to expand
-`Services` entries into `Commands`. See the services section below.
+`Services` entries into `Commands`, then `validateOnceSteps` rejects once steps
+without an id or cmd, or with duplicate ids (`ErrInvalidOnceStep`). See the
+services section below.
 
 ### StringOrList serialisation notes
 
@@ -216,9 +240,11 @@ runner) to keep the runner pure. `partitionDeps` splits the `DependsOn` slice
 into cross-project and local lists. `runCrossProjectDeps` loads each referenced
 project's config and executes the command before the local dep chain runs.
 
-Cross-project deps run **before** local deps. When multiple projects share the
-same cross-project dep it is deduplicated and runs once. Transitive cross-project
-deps are resolved recursively with a visited set to detect cycles.
+Cross-project deps run **before** local deps. Transitive cross-project deps are
+resolved recursively by `runCrossProjectDeps` with a `crossDepWalk`: its
+`inProgress` set (the recursion path) detects cycles, and its `done` set makes
+each `proj:cmd` run at most once per invocation, including diamonds and deps
+shared by several named projects.
 
 Sentinel: `ErrCrossProjectCycle` (defined in `internal/cli/run.go`) — returned
 when a cycle is detected across project boundaries.
@@ -245,20 +271,42 @@ and a shared `sync.Mutex` to serialise writes to the prefix writer.
 For a single target, both concurrent variants delegate to the non-concurrent
 equivalents (no prefix, cleaner output).
 
+### Follow-ups
+
+`Target.FollowUps` run in order after the target's own command succeeds (also
+when `Cmd` is empty), in the same dir; `ExtraArgs` don't apply to them and
+`RunWithDeps` attaches them to the root command only. After each step succeeds
+the runner calls `OnSuccess` (skipped in dry-run); any failure stops the rest.
+The runner stays stateless: callers persist what they need in `OnSuccess`.
+
 ### Multi-step commands
 
 When `t.Command.Cmd` contains more than one string (`IsMulti() == true`),
-`runTarget` loops over `t.Command.Cmd.Values()` and executes each step via
+`runCommand` loops over `t.Command.Cmd.Values()` and executes each step via
 `sh -c` in sequence. The chain aborts on the first non-zero exit. `ExtraArgs`
 are appended only to the **last** step. Preconditions run once before the
 first step. In dry-run mode each step is printed separately.
+
+## Once steps
+
+`cli.onceFollowUps` (`internal/cli/once.go`) reads applied step IDs from
+`state.Store` keyed by `(Loader.ProjectRoot(dir), canonical command name)`:
+the nearest dir with a `.projector.yaml`, symlinks resolved, and `AliasOf` when
+invoked through an alias. It turns the pending steps into
+follow-ups (inheriting the command's `Env`), and records each with
+`MarkApplied` in `OnSuccess`. It is used on all three run paths: cwd, named
+projects, and cross-project deps. The store is created lazily (`lazyStore`,
+`sync.Once`, safe for `status`'s concurrent lookups), so commands without once
+steps never touch the state dir. Only the invoked command's once steps run, not
+those of its local `depends_on` commands. Tests set `XDG_STATE_HOME` with
+`t.Setenv`.
 
 ## Error handling
 
 - Always wrap errors with context: `fmt.Errorf("load config: %w", err)`
 - Sentinel errors (`ErrNotFound`, `ErrAlreadyExists`, `ErrCyclicDependency`,
-  `ErrUnknownDependency`, `ErrCrossProjectCycle`) are defined in their respective
-  packages and must be checked with `errors.Is`.
+  `ErrUnknownDependency`, `ErrCrossProjectCycle`, `ErrInvalidOnceStep`) are
+  defined in their respective packages and must be checked with `errors.Is`.
 - `internal/cli` commands return errors; `main.go` prints them and sets exit
   code. Never call `os.Exit` inside library code.
 

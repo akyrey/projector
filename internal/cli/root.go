@@ -30,6 +30,9 @@ type deps struct {
 	registry *project.Registry
 	runner   *runner.Runner
 	flags    *globalFlags
+
+	// state holds applied once steps; created on first use.
+	state *lazyStore
 }
 
 // NewRootCmd builds and returns the root cobra.Command for projector.
@@ -61,6 +64,7 @@ func newRootCmdWithLoader(version string, loader *config.Loader) *cobra.Command 
 		registry: project.NewRegistry(loader),
 		runner:   runner.NewDefault(),
 		flags:    flags,
+		state:    &lazyStore{},
 	}
 
 	root := &cobra.Command{
@@ -101,6 +105,7 @@ Examples:
 	root.AddCommand(newRunCmd(d))
 	root.AddCommand(newListCmd(d))
 	root.AddCommand(newProjectCmd(d))
+	root.AddCommand(newStatusCmd(d))
 	root.AddCommand(newConfigCmd(d))
 	root.AddCommand(newCompletionCmd(root))
 

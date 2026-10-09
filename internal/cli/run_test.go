@@ -431,3 +431,79 @@ func TestCrossProjectDep_CwdMode(t *testing.T) {
 		t.Error("lib:prepare did not run (marker file not created)")
 	}
 }
+
+// TestCrossProjectDep_TransitiveDiamondRunsEachOnce verifies that a dep reached
+// through several transitive paths runs only once per invocation:
+//
+//	app -> ^api:start, ^auth:start
+//	api -> ^base:start
+//	auth -> ^base:start
+//
+// base must run exactly once, before api and auth.
+func TestCrossProjectDep_TransitiveDiamondRunsEachOnce(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "log.txt")
+	write := func(dir string, dependsOn ...string) {
+		t.Helper()
+		cfg := &config.Config{
+			Commands: map[string]config.Command{
+				"start": {
+					Cmd:       config.NewStringOrList("echo " + filepath.Base(dir) + " >> " + logFile),
+					DependsOn: dependsOn,
+				},
+			},
+		}
+		if err := config.SaveFile(filepath.Join(dir, config.LocalConfigName), cfg); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+	}
+
+	root := t.TempDir()
+	dirs := map[string]string{}
+	for _, name := range []string{"base", "api", "auth", "app"} {
+		dirs[name] = filepath.Join(root, name)
+		if err := os.Mkdir(dirs[name], 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	write(dirs["base"])
+	write(dirs["api"], "^base:start")
+	write(dirs["auth"], "^base:start")
+	write(dirs["app"], "^api:start", "^auth:start")
+
+	globalPath := filepath.Join(t.TempDir(), "global.yaml")
+	for _, name := range []string{"base", "api", "auth", "app"} {
+		cmd := cli.NewRootCmdWithGlobal("test", globalPath)
+		cmd.SetArgs([]string{"project", "add", name, dirs[name]})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("project add %s: %v", name, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"named project", []string{"run", "start", "app"}},
+		{"cwd", []string{"--pwd", dirs["app"], "run", "start"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(logFile, nil, 0o644); err != nil {
+				t.Fatalf("reset log: %v", err)
+			}
+			cmd := cli.NewRootCmdWithGlobal("test", globalPath)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("run start: %v", err)
+			}
+
+			got, err := os.ReadFile(logFile)
+			if err != nil {
+				t.Fatalf("read log: %v", err)
+			}
+			want := "base\napi\nauth\napp\n"
+			if string(got) != want {
+				t.Errorf("execution log = %q, want %q", got, want)
+			}
+		})
+	}
+}

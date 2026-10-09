@@ -35,6 +35,24 @@ type Target struct {
 
 	// DryRun, when true, prints what would be executed without actually running.
 	DryRun bool
+
+	// FollowUps run in order after Command succeeds, in the same directory.
+	// ExtraArgs do not apply to them.
+	FollowUps []FollowUp
+}
+
+// FollowUp is a step run after a target's own command succeeds. The runner
+// stays stateless: callers persist whatever they need in OnSuccess.
+type FollowUp struct {
+	// Name is the display label for the step.
+	Name string
+
+	// Command is the step to execute. Its own FollowUps are ignored.
+	Command config.Command
+
+	// OnSuccess, if set, is called after the step succeeds (never in dry-run).
+	// An error stops the remaining follow-ups.
+	OnSuccess func() error
 }
 
 // Runner executes commands, handling both single and multi-target scenarios.
@@ -92,9 +110,11 @@ func (r *Runner) RunWithDeps(ctx context.Context, t Target, commands map[string]
 			DryRun:  t.DryRun,
 		}
 
-		// Extra args only apply to the root command (last in topo order), not deps.
+		// Extra args and follow-ups only apply to the root command (last in
+		// topo order), not deps.
 		if i == len(order)-1 {
 			step.ExtraArgs = t.ExtraArgs
+			step.FollowUps = t.FollowUps
 		}
 
 		if err := r.runTarget(ctx, step, r.stdin, r.stdout, r.stderr); err != nil {
@@ -193,11 +213,43 @@ func (r *Runner) RunConcurrent(ctx context.Context, targets []Target) error {
 	return g.Wait()
 }
 
-// runTarget executes a single target, reading from inR and writing stdout/stderr
-// to outW/errW. If inR is nil the subprocess receives no stdin (appropriate for
-// concurrent multi-target runs). If t.DryRun is true the command is printed but
-// not executed.
+// runTarget executes a single target and then its follow-ups, reading from inR
+// and writing stdout/stderr to outW/errW. If inR is nil the subprocess receives
+// no stdin (appropriate for concurrent multi-target runs). If t.DryRun is true
+// commands are printed but not executed.
 func (r *Runner) runTarget(ctx context.Context, t Target, inR io.Reader, outW, errW io.Writer) error {
+	if err := r.runCommand(ctx, t, inR, outW, errW); err != nil {
+		return err
+	}
+	return r.runFollowUps(ctx, t, inR, outW, errW)
+}
+
+// runFollowUps runs t.FollowUps in order, calling each OnSuccess after its step
+// succeeds. The first failure stops the remaining steps.
+func (r *Runner) runFollowUps(ctx context.Context, t Target, inR io.Reader, outW, errW io.Writer) error {
+	for _, f := range t.FollowUps {
+		step := Target{Name: f.Name, Dir: t.Dir, Command: f.Command, DryRun: t.DryRun}
+		if !t.DryRun {
+			if _, err := fmt.Fprintf(outW, "→ %s\n", f.Name); err != nil {
+				return err
+			}
+		}
+		if err := r.runCommand(ctx, step, inR, outW, errW); err != nil {
+			return fmt.Errorf("%s: %w", f.Name, err)
+		}
+		if t.DryRun || f.OnSuccess == nil {
+			continue
+		}
+		if err := f.OnSuccess(); err != nil {
+			return fmt.Errorf("%s: %w", f.Name, err)
+		}
+	}
+	return nil
+}
+
+// runCommand executes t.Command (preconditions, then each shell string),
+// ignoring t.FollowUps.
+func (r *Runner) runCommand(ctx context.Context, t Target, inR io.Reader, outW, errW io.Writer) error {
 	shell, flag := shellAndFlag()
 
 	// Resolve the list of shell command strings.
