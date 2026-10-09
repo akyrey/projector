@@ -443,3 +443,19 @@ func TestStartRunValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestGraphEndpoint(t *testing.T) {
+	e := newEnv(t, nil)
+	e.addProject("api", &config.Config{Commands: map[string]config.Command{"start": cmd("true")}})
+	e.addProject("web", &config.Config{Commands: map[string]config.Command{
+		"start": {Cmd: config.NewStringOrList("true"), DependsOn: []string{"^api:start"}},
+	}})
+
+	g := decode[app.Graph](t, e.do(http.MethodGet, "/api/graph", ""), http.StatusOK)
+	if len(g.Projects) != 2 || len(g.Edges) != 1 {
+		t.Fatalf("graph = %+v", g)
+	}
+	if want := (app.DepEdge{From: "web", FromCommand: "start", To: "api", ToCommand: "start"}); g.Edges[0] != want {
+		t.Errorf("edge = %+v, want %+v", g.Edges[0], want)
+	}
+}

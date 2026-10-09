@@ -194,3 +194,12 @@ func nonNil(s []string) []string {
 	}
 	return s
 }
+
+func (s *Server) graph(w http.ResponseWriter, _ *http.Request) {
+	g, err := s.app.Graph()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, g)
+}

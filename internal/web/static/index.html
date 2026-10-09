@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>projector</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/graph.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
@@ -26,6 +27,22 @@
     </nav>
 
     <section class="panel detail" aria-live="polite">
+      <div class="tabs" role="tablist">
+        <button id="tab-project" type="button" role="tab" aria-selected="true">Project</button>
+        <button id="tab-graph" type="button" role="tab" aria-selected="false">Dependencies</button>
+      </div>
+
+      <div id="graph-view" hidden>
+        <div class="graph-head">
+          <label>Command <select id="graph-command"></select></label>
+          <span class="legend"><span class="dot up"></span>running <span class="dot partial"></span>partly <span class="dot"></span>stopped</span>
+        </div>
+        <p class="muted graph-help">Arrows point from a project to what it depends on (<code>^project:command</code>). Click a project to open it.</p>
+        <div id="graph" class="graph"></div>
+        <ul id="graph-errors" class="graph-errors"></ul>
+      </div>
+
+      <div id="project-view">
       <div id="detail-empty" class="muted">Select a project.</div>
       <div id="detail" hidden>
         <div class="detail-head">
@@ -49,6 +66,7 @@
           </div>
           <div id="info"></div>
         </div>
+      </div>
       </div>
     </section>
 

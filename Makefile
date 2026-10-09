@@ -4,7 +4,7 @@ CMD        := ./cmd/projector
 VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS    := -X main.version=$(VERSION) -s -w
 
-.PHONY: all build install test test-race test-cover lint vet fmt clean help
+.PHONY: all build install test test-js test-race test-cover lint vet fmt clean help
 
 ## all: build the binary (default target)
 all: build
@@ -21,6 +21,10 @@ install:
 ## test: run all tests
 test:
 	go test ./...
+
+## test-js: run the dashboard's frontend tests (needs node)
+test-js:
+	node internal/web/testdata/graph_test.js
 
 ## test-race: run tests with the race detector
 test-race:

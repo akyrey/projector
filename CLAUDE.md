@@ -13,6 +13,7 @@ from a hierarchy of YAML config files (global → ancestor dirs → cwd).
 ```bash
 make build        # build ./bin/projector
 make test         # go test ./...
+make test-js      # node tests for the dashboard's graph layout
 make test-race    # go test -race ./...
 make test-cover   # coverage report
 make vet          # go vet ./...
@@ -349,7 +350,11 @@ syntax), then starts a `runs.Run` (`ErrTooManyRunning` → 429, `ErrClosed` →
 output is streamed by `GET /api/runs/{id}/stream` as SSE: `reset` (the buffered
 output; sent first, after lagging, and before `end`), `output` (a chunk), `end`
 (final `runs.Info`). Chunks are cut on UTF-8 rune boundaries (`splitUTF8`).
-`App.Info` caps output (`cappedWriter`, stops the command when full) and
+`GET /api/graph` returns `App.Graph`: every `^project:command` edge of the
+registered projects (aliases skipped, unregistered targets kept, config errors
+per project). The frontend lays it out in `static/graph.js` (`layoutGraph`, a
+pure function also loaded by node in `testdata/graph_test.js`; keep it free of
+DOM access). `App.Info` caps output (`cappedWriter`, stops the command when full) and
 concurrency (`infoSlots`). Tests use `web.WithContainerLister` to avoid docker
 and `web.WithMaxRunning` for limits.
 

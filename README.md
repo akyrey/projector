@@ -484,13 +484,20 @@ one to run it), and its [info items](#info-items). Extra args are split like a
 shell would (quotes and backslashes work) and each one reaches the command as a
 single literal argument, so `;`, `$(...)` and the like are never interpreted.
 
+The **Dependencies** tab draws the cross-project graph declared with
+`depends_on: [^project:command]`, filtered by command (`start` by default):
+each project sits above what it depends on, its border shows whether its
+containers are running, and clicking it opens the project. Projects that are
+referenced but not registered are drawn dashed in red. `/#graph` links to it.
+
 Runs stream their output live and can be stopped, so long-running commands
 work too: `logs` to read container logs, or a dev server. Stopping a run sends
 SIGTERM to its whole process tree, then SIGKILL after 5 seconds. Runs have no
 stdin, so interactive commands (`shell`, `mysql`) belong in the terminal. Up to
 16 runs can be in progress at once. Recent runs and the last 2 MB of their
 output are kept in memory until the server exits, which stops every run still
-going.
+going. When a run you started finishes while the tab is in the background, the
+browser shows a desktop notification (it asks for permission on your first run).
 
 The server is for your machine only:
 
@@ -545,6 +552,7 @@ projector completion powershell | Out-String | Invoke-Expression
 make build        # build ./bin/projector
 make install      # install to $GOPATH/bin
 make test         # run tests
+make test-js      # run the dashboard's frontend tests (needs node)
 make test-race    # run tests with the race detector
 make test-cover   # run tests and print coverage
 make vet          # run go vet
@@ -573,7 +581,8 @@ projector/
 │   ├── app/                    # use cases shared by the CLI and the dashboard
 │   │   ├── run.go              # run a command: cross-project deps, local deps, once steps
 │   │   ├── once.go             # once steps → runner follow-ups + state recording
-│   │   └── info.go             # run a project's info items
+│   │   ├── info.go             # run a project's info items
+│   │   └── graph.go            # cross-project dependency graph
 │   ├── config/
 │   │   ├── types.go            # Config, Command, OnceStep, InfoItem, Project, MergedConfig types
 │   │   ├── once.go             # once step validation + pending filter
@@ -594,7 +603,9 @@ projector/
 │   │   ├── projects.go         # project status, detail and info endpoints
 │   │   ├── runs.go             # start/stop runs, SSE output stream
 │   │   ├── listen.go           # loopback-only listener, per-start token
-│   │   └── static/             # embedded frontend (vanilla JS, no build step)
+│   │   ├── static/             # embedded frontend (vanilla JS, no build step)
+│   │   │   └── graph.js        # dependency graph layout (pure, unit tested)
+│   │   └── testdata/graph_test.js  # node tests for graph.js
 │   ├── runner/
 │   │   ├── runner.go           # Run, RunConcurrent, RunWithDeps, RunConcurrentWithDeps, follow-ups
 │   │   ├── processgroup_*.go   # WithProcessGroup: cancel the whole process tree
