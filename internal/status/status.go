@@ -15,7 +15,12 @@ import (
 	"strings"
 	"sync"
 	"text/tabwriter"
+	"time"
 )
+
+// DockerTimeout is a sensible bound for ListContainers, so a stopped daemon
+// does not hang callers.
+const DockerTimeout = 5 * time.Second
 
 // composeDirLabel is set by docker compose on every container it creates; it
 // holds the project directory, which is how containers are mapped to projects.

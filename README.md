@@ -336,6 +336,29 @@ commands:
 - `--dry-run` prints pending steps without running or recording them.
 - `projector status` shows how many steps are pending in each project.
 
+### Info items
+
+`info` lists read-only commands whose output the [dashboard](#web-dashboard)
+shows for a project, such as pending migrations or recent commits:
+
+```yaml
+info:
+  - name: Pending migrations
+    description: Migrations not applied to the local database
+    cmd: ./xenv artisan migrate:status --pending
+  - name: Recent commits
+    cmd: git log --oneline -n 10
+```
+
+- Items merge by `name` across config files: a closer item replaces the one
+  with the same name in place, new names are appended, and an item with a name
+  but no `cmd` removes an inherited one.
+- They run in the project directory without stdin, concurrently (at most 8 at
+  once), each limited to 30 seconds and 256 KB of output. A failing item shows
+  its output and error.
+- To reuse a command that differs per project, call projector itself:
+  `cmd: projector artisan about`.
+
 ## Usage
 
 ### Running commands
@@ -447,6 +470,43 @@ proxy     -             not a git repo     2/2 running  -
   project path (`?` when docker is unavailable).
 - **ONCE STEPS**: [once steps](#once-steps) not yet applied on this machine.
 
+### Web dashboard
+
+```bash
+projector serve            # prints the dashboard link
+projector serve --open     # and opens it in the browser
+projector serve --addr 127.0.0.1:9000
+```
+
+The dashboard shows every registered project with its git, container and
+once-step status (refreshed every 15 seconds), the commands it resolves (click
+one to run it), and its [info items](#info-items). Extra args are split like a
+shell would (quotes and backslashes work) and each one reaches the command as a
+single literal argument, so `;`, `$(...)` and the like are never interpreted.
+
+Runs stream their output live and can be stopped, so long-running commands
+work too: `logs` to read container logs, or a dev server. Stopping a run sends
+SIGTERM to its whole process tree, then SIGKILL after 5 seconds. Runs have no
+stdin, so interactive commands (`shell`, `mysql`) belong in the terminal. Up to
+16 runs can be in progress at once. Recent runs and the last 2 MB of their
+output are kept in memory until the server exits, which stops every run still
+going.
+
+The server is for your machine only:
+
+- It listens on loopback addresses only and rejects requests whose `Host` is
+  not `localhost`, `127.0.0.1` or `::1` (DNS rebinding).
+- The API needs a token, new on every start, sent as
+  `Authorization: Bearer <token>`. The printed link carries it in the URL
+  fragment (`/#token=...`), which browsers never send to a server; the page
+  moves it to `localStorage` (readable only by that exact host and port) and
+  strips it from the address bar. Restarting the server signs every tab out.
+- No cookies are used: they are shared by every port on `localhost`, so a dev
+  server on another port would receive them. Without an ambient credential,
+  other sites cannot make authenticated requests (no CSRF).
+- Responses carry a strict Content-Security-Policy, and the page renders all
+  data as text.
+
 ### Listing resolved commands
 
 ```bash
@@ -505,14 +565,19 @@ projector/
 │   │   ├── run.go              # `projector run` + shared runCommand logic
 │   │   ├── list.go             # `projector list`
 │   │   ├── status.go           # `projector status`
-│   │   ├── once.go             # once steps → runner follow-ups + state recording
+│   │   ├── serve.go            # `projector serve`
 │   │   ├── project.go          # `projector project add/remove/list`
 │   │   ├── config_cmd.go       # `projector config edit/set/remove/show`
 │   │   ├── completion.go       # `projector completion`
 │   │   └── context.go          # SIGINT/SIGTERM cancellation context
+│   ├── app/                    # use cases shared by the CLI and the dashboard
+│   │   ├── run.go              # run a command: cross-project deps, local deps, once steps
+│   │   ├── once.go             # once steps → runner follow-ups + state recording
+│   │   └── info.go             # run a project's info items
 │   ├── config/
-│   │   ├── types.go            # Config, Command, OnceStep, Project, MergedConfig types
+│   │   ├── types.go            # Config, Command, OnceStep, InfoItem, Project, MergedConfig types
 │   │   ├── once.go             # once step validation + pending filter
+│   │   ├── info.go             # info item merge + validation
 │   │   ├── file.go             # LoadFile / SaveFile / GlobalConfigPath
 │   │   └── loader.go           # hierarchical load + merge (global → ancestors → cwd)
 │   ├── project/
@@ -521,8 +586,18 @@ projector/
 │   │   └── store.go            # per-machine record of applied once steps
 │   ├── status/
 │   │   └── status.go           # git / docker / once-step status table
+│   ├── runs/
+│   │   └── manager.go          # background runs: status, output buffer, subscribers
+│   ├── web/
+│   │   ├── server.go           # routes, JSON helpers
+│   │   ├── auth.go             # security headers, loopback Host, bearer token
+│   │   ├── projects.go         # project status, detail and info endpoints
+│   │   ├── runs.go             # start/stop runs, SSE output stream
+│   │   ├── listen.go           # loopback-only listener, per-start token
+│   │   └── static/             # embedded frontend (vanilla JS, no build step)
 │   ├── runner/
 │   │   ├── runner.go           # Run, RunConcurrent, RunWithDeps, RunConcurrentWithDeps, follow-ups
+│   │   ├── processgroup_*.go   # WithProcessGroup: cancel the whole process tree
 │   │   ├── deps.go             # topological sort + cycle detection for depends_on
 │   │   └── output.go           # thread-safe prefixed + colored output writer
 │   └── editor/

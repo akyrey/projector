@@ -28,11 +28,14 @@ Always run `make test-race` before committing. All tests must pass.
 cmd/projector/main.go       # entry point only — no logic here
 internal/
   cli/                      # cobra command wiring (no business logic)
+  app/                      # use cases shared by cli and web: run, once steps, info
   config/                   # types, file I/O, hierarchical loader + merge
   project/                  # project registry (reads/writes global config)
   runner/                   # command execution + depends_on resolution
   state/                    # machine-local state (applied once steps)
   status/                   # git / docker / once-step status for `projector status`
+  runs/                     # background runs for the dashboard: output buffer + subscribers
+  web/                      # `projector serve`: JSON API, SSE, auth, embedded frontend
   editor/                   # $EDITOR integration
 ```
 
@@ -44,6 +47,14 @@ application code (not intended to be imported by external packages).
 - **`internal/cli`** contains only cobra wiring. All real logic lives in the
   other packages. Commands construct dependencies and call into them; they do
   not implement algorithms.
+- **`internal/app`** holds the use cases both front ends share: `App.Run`
+  (cross-project deps, local deps, once steps), `Projects`, `PendingOnceCount`,
+  `Info`. Each `Run` call takes the `*runner.Runner` to write to, so the CLI
+  uses the terminal and the dashboard a per-run buffer.
+- **`internal/web`** is HTTP only: it validates input, calls `app`, and shapes
+  JSON. Its frontend in `static/` is embedded, vanilla JS with no build step;
+  render data with `textContent`, never `innerHTML`.
+- **`internal/runs`** tracks runs without knowing what they execute (`runs.Func`).
 - **`internal/config`** is pure data: types, YAML serialisation, and the merge
   algorithm. It has no knowledge of CLI flags or execution.
 - **`internal/runner`** is pure execution: no config loading, no project
@@ -52,8 +63,9 @@ application code (not intended to be imported by external packages).
   project dir under `$XDG_STATE_HOME/projector`. It knows nothing of config.
 - **`internal/status`** gathers git and docker state; pending once-step counts
   come in through an injected `PendingFunc`, so it imports neither config nor state.
-- Dependencies flow inward: `cli → config, project, runner, editor, state, status`.
-  Inner packages (`config`, `runner`, `state`, `status`) must not import `cli`.
+- Dependencies flow inward: `cli → app, web, config, project, runner, editor,
+  state, status`; `web → app, runs, runner, status`; `app → config, project,
+  runner, state, status`. Inner packages must not import `cli`, `web` or `app`.
 
 ## Config types
 
@@ -79,6 +91,14 @@ type Config struct {
     Commands map[string]Command `yaml:"commands,omitempty"`
     Services map[string]Service `yaml:"services,omitempty"`
     Exclude  []string           `yaml:"exclude,omitempty"` // drop inherited commands
+    Info     []InfoItem         `yaml:"info,omitempty"`    // dashboard info items
+}
+
+// InfoItem merges by Name: closer replaces in place, no Cmd removes it.
+type InfoItem struct {
+    Name        string       `yaml:"name"`
+    Description string       `yaml:"description,omitempty"`
+    Cmd         StringOrList `yaml:"cmd"`
 }
 
 type Command struct {
@@ -113,6 +133,7 @@ type MergedConfig struct {
     Projects map[string]Project
     Commands map[string]Command
     Services map[string]Service
+    Info     []InfoItem
 }
 ```
 
@@ -128,7 +149,8 @@ command in a closer layer clears the exclusion; a closer service does not.
 
 After all layers are merged, `expandServices` is called in `Load` to expand
 `Services` entries into `Commands`, then `validateOnceSteps` rejects once steps
-without an id or cmd, or with duplicate ids (`ErrInvalidOnceStep`). See the
+without an id or cmd, or with duplicate ids (`ErrInvalidOnceStep`), and
+`validateInfo` rejects nameless info items (`ErrInvalidInfoItem`). See the
 services section below.
 
 ### StringOrList serialisation notes
@@ -235,7 +257,7 @@ depends_on:
   - run-migrations    # local dep, unchanged
 ```
 
-Cross-project resolution lives entirely in `internal/cli/run.go` (not in the
+Cross-project resolution lives entirely in `internal/app/run.go` (not in the
 runner) to keep the runner pure. `partitionDeps` splits the `DependsOn` slice
 into cross-project and local lists. `runCrossProjectDeps` loads each referenced
 project's config and executes the command before the local dep chain runs.
@@ -246,7 +268,7 @@ resolved recursively by `runCrossProjectDeps` with a `crossDepWalk`: its
 each `proj:cmd` run at most once per invocation, including diamonds and deps
 shared by several named projects.
 
-Sentinel: `ErrCrossProjectCycle` (defined in `internal/cli/run.go`) — returned
+Sentinel: `ErrCrossProjectCycle` (defined in `internal/app/run.go`, re-exported by `cli`) — returned
 when a cycle is detected across project boundaries.
 
 ## Runner
@@ -271,6 +293,12 @@ and a shared `sync.Mutex` to serialise writes to the prefix writer.
 For a single target, both concurrent variants delegate to the non-concurrent
 equivalents (no prefix, cleaner output).
 
+`runner.New(stdin, stdout, stderr, runner.WithProcessGroup())` starts every
+command in its own process group: cancelling the context sends SIGTERM to the
+whole group, then SIGKILL after `killGrace`, and `WaitDelay` (`killGrace`)
+stops Wait from hanging on pipes held by grandchildren. The dashboard and info items use it; the CLI does not, since
+a command outside the terminal's foreground group cannot read from it.
+
 ### Follow-ups
 
 `Target.FollowUps` run in order after the target's own command succeeds (also
@@ -289,23 +317,48 @@ first step. In dry-run mode each step is printed separately.
 
 ## Once steps
 
-`cli.onceFollowUps` (`internal/cli/once.go`) reads applied step IDs from
+`App.onceFollowUps` (`internal/app/once.go`) reads applied step IDs from
 `state.Store` keyed by `(Loader.ProjectRoot(dir), canonical command name)`:
 the nearest dir with a `.projector.yaml`, symlinks resolved, and `AliasOf` when
 invoked through an alias. It turns the pending steps into
 follow-ups (inheriting the command's `Env`), and records each with
 `MarkApplied` in `OnSuccess`. It is used on all three run paths: cwd, named
 projects, and cross-project deps. The store is created lazily (`lazyStore`,
-`sync.Once`, safe for `status`'s concurrent lookups), so commands without once
+`sync.Once`, safe for concurrent `status` and dashboard lookups), so commands without once
 steps never touch the state dir. Only the invoked command's once steps run, not
 those of its local `depends_on` commands. Tests set `XDG_STATE_HOME` with
 `t.Setenv`.
+
+## Web dashboard
+
+`projector serve` (`internal/cli/serve.go`) listens via `web.ListenLocal`, which
+refuses non-loopback addresses, with a fresh `web.NewToken()` per start, and
+prints `http://<addr>/#token=<token>`. `web.Server` wraps every route in `guard`
+(`internal/web/auth.go`): CSP and security headers on every response, loopback
+`Host` only (DNS rebinding), and `Authorization: Bearer <token>` on `/api/`.
+The page and `/static/` are public. Never accept the token from a cookie or the
+query string: cookies are shared by every localhost port (dev servers would get
+them), and a header-only credential is what makes CSRF checks unnecessary. The
+page keeps the token in `localStorage` and streams with `fetch`, because
+EventSource cannot send headers.
+
+`POST /api/runs` decodes strictly, validates the project and command,
+shell-quotes each arg (`shellQuoteAll`: args are literal words, never shell
+syntax), then starts a `runs.Run` (`ErrTooManyRunning` → 429, `ErrClosed` →
+503) that calls `App.Run` with a process-group runner writing to the run. Its
+output is streamed by `GET /api/runs/{id}/stream` as SSE: `reset` (the buffered
+output; sent first, after lagging, and before `end`), `output` (a chunk), `end`
+(final `runs.Info`). Chunks are cut on UTF-8 rune boundaries (`splitUTF8`).
+`App.Info` caps output (`cappedWriter`, stops the command when full) and
+concurrency (`infoSlots`). Tests use `web.WithContainerLister` to avoid docker
+and `web.WithMaxRunning` for limits.
 
 ## Error handling
 
 - Always wrap errors with context: `fmt.Errorf("load config: %w", err)`
 - Sentinel errors (`ErrNotFound`, `ErrAlreadyExists`, `ErrCyclicDependency`,
-  `ErrUnknownDependency`, `ErrCrossProjectCycle`, `ErrInvalidOnceStep`) are
+  `ErrUnknownDependency`, `ErrCrossProjectCycle`, `ErrInvalidOnceStep`,
+  `ErrInvalidInfoItem`) are
   defined in their respective packages and must be checked with `errors.Is`.
 - `internal/cli` commands return errors; `main.go` prints them and sets exit
   code. Never call `os.Exit` inside library code.

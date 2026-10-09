@@ -1,4 +1,4 @@
-package cli
+package app
 
 import (
 	"fmt"
@@ -26,8 +26,8 @@ func (l *lazyStore) get() (*state.Store, error) {
 // onceKey returns the state key for cmd run from dir: the project root
 // (symlinks resolved) and the canonical command name, so subdirectories,
 // symlinked paths and aliases share the same record.
-func (d *deps) onceKey(dir, cmdName string, cmd config.Command) (root, name string, err error) {
-	root, err = d.loader.ProjectRoot(dir)
+func (a *App) onceKey(dir, cmdName string, cmd config.Command) (root, name string, err error) {
+	root, err = a.loader.ProjectRoot(dir)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve project root: %w", err)
 	}
@@ -37,16 +37,16 @@ func (d *deps) onceKey(dir, cmdName string, cmd config.Command) (root, name stri
 	return root, cmdName, nil
 }
 
-// pendingOnceSteps returns cmd's once steps not yet applied in dir.
-func (d *deps) pendingOnceSteps(dir, cmdName string, cmd config.Command) ([]config.OnceStep, error) {
+// PendingOnceSteps returns cmd's once steps not yet applied in dir.
+func (a *App) PendingOnceSteps(dir, cmdName string, cmd config.Command) ([]config.OnceStep, error) {
 	if len(cmd.Once) == 0 {
 		return nil, nil
 	}
-	store, err := d.state.get()
+	store, err := a.state.get()
 	if err != nil {
 		return nil, fmt.Errorf("open state: %w", err)
 	}
-	root, name, err := d.onceKey(dir, cmdName, cmd)
+	root, name, err := a.onceKey(dir, cmdName, cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -63,16 +63,16 @@ func (d *deps) pendingOnceSteps(dir, cmdName string, cmd config.Command) ([]conf
 // onceFollowUps turns cmd's pending once steps in dir into runner follow-ups
 // that record themselves as applied when they succeed. The steps inherit the
 // command's env.
-func (d *deps) onceFollowUps(dir, cmdName string, cmd config.Command) ([]runner.FollowUp, error) {
-	pending, err := d.pendingOnceSteps(dir, cmdName, cmd)
+func (a *App) onceFollowUps(dir, cmdName string, cmd config.Command) ([]runner.FollowUp, error) {
+	pending, err := a.PendingOnceSteps(dir, cmdName, cmd)
 	if err != nil || len(pending) == 0 {
 		return nil, err
 	}
-	store, err := d.state.get()
+	store, err := a.state.get()
 	if err != nil {
 		return nil, fmt.Errorf("open state: %w", err)
 	}
-	root, name, err := d.onceKey(dir, cmdName, cmd)
+	root, name, err := a.onceKey(dir, cmdName, cmd)
 	if err != nil {
 		return nil, err
 	}

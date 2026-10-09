@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/akyrey/projector/internal/app"
 	"github.com/akyrey/projector/internal/config"
 	"github.com/akyrey/projector/internal/project"
 	"github.com/akyrey/projector/internal/runner"
@@ -31,8 +32,8 @@ type deps struct {
 	runner   *runner.Runner
 	flags    *globalFlags
 
-	// state holds applied once steps; created on first use.
-	state *lazyStore
+	// app runs commands and answers project queries; shared with `serve`.
+	app *app.App
 }
 
 // NewRootCmd builds and returns the root cobra.Command for projector.
@@ -59,12 +60,13 @@ func NewRootCmdWithGlobal(version, globalPath string) *cobra.Command {
 func newRootCmdWithLoader(version string, loader *config.Loader) *cobra.Command {
 	flags := &globalFlags{}
 
+	a := app.New(loader)
 	d := &deps{
 		loader:   loader,
-		registry: project.NewRegistry(loader),
+		registry: a.Registry(),
 		runner:   runner.NewDefault(),
 		flags:    flags,
-		state:    &lazyStore{},
+		app:      a,
 	}
 
 	root := &cobra.Command{
@@ -106,6 +108,7 @@ Examples:
 	root.AddCommand(newListCmd(d))
 	root.AddCommand(newProjectCmd(d))
 	root.AddCommand(newStatusCmd(d))
+	root.AddCommand(newServeCmd(d))
 	root.AddCommand(newConfigCmd(d))
 	root.AddCommand(newCompletionCmd(root))
 

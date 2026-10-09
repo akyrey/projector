@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>projector</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>projector</h1>
+    <span id="refreshed" class="muted"></span>
+    <button id="refresh" type="button" title="Refresh project status">Refresh</button>
+  </header>
+
+  <section id="logged-out" class="logged-out" hidden>
+    <h2>Not signed in</h2>
+    <p>Open the link printed by <code>projector serve</code> in your terminal. It carries a token that changes every time the server starts.</p>
+  </section>
+
+  <main id="app" class="layout">
+    <nav class="panel projects" aria-label="Projects">
+      <h2>Projects</h2>
+      <ul id="project-list"></ul>
+    </nav>
+
+    <section class="panel detail" aria-live="polite">
+      <div id="detail-empty" class="muted">Select a project.</div>
+      <div id="detail" hidden>
+        <div class="detail-head">
+          <h2 id="detail-name"></h2>
+          <code id="detail-dir" class="muted"></code>
+        </div>
+        <p id="detail-status" class="status-line"></p>
+
+        <label class="args">
+          <span>Extra args</span>
+          <input id="args" type="text" placeholder="passed to the command as literal args, e.g. on or --filter='Foo bar'" autocomplete="off" spellcheck="false">
+        </label>
+
+        <h3>Commands</h3>
+        <div id="commands" class="commands"></div>
+
+        <div id="info-section">
+          <div class="section-head">
+            <h3>Info</h3>
+            <button id="load-info" type="button">Load</button>
+          </div>
+          <div id="info"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel runs" aria-label="Runs">
+      <h2>Runs</h2>
+      <ul id="run-list"></ul>
+      <div id="run-view" hidden>
+        <div class="run-head">
+          <strong id="run-title"></strong>
+          <span id="run-status" class="badge"></span>
+          <label class="muted"><input id="follow" type="checkbox" checked> follow</label>
+          <button id="stop" type="button" class="danger">Stop</button>
+        </div>
+        <pre id="output" class="output" tabindex="0"></pre>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="alert" hidden></div>
+</body>
+</html>

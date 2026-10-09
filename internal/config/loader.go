@@ -66,6 +66,9 @@ func (l *Loader) Load(pwd string) (*MergedConfig, error) {
 	if err := validateOnceSteps(merged.Commands); err != nil {
 		return nil, err
 	}
+	if err := validateInfo(merged.Info); err != nil {
+		return nil, err
+	}
 
 	return merged, nil
 }
@@ -229,6 +232,8 @@ func mergeInto(dst *MergedConfig, src *Config) {
 	for name, svc := range src.Services {
 		dst.Services[name] = svc
 	}
+
+	dst.Info = mergeInfo(dst.Info, src.Info)
 
 	for _, name := range src.Exclude {
 		delete(dst.Commands, name)

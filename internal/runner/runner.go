@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -55,11 +56,30 @@ type FollowUp struct {
 	OnSuccess func() error
 }
 
+// killGrace is how long a cancelled (isolated) command gets to exit after
+// SIGTERM before SIGKILL, and how long Wait waits for output pipes held by its
+// children. A variable so tests can shorten it.
+var killGrace = 5 * time.Second
+
 // Runner executes commands, handling both single and multi-target scenarios.
 type Runner struct {
 	stdin  io.Reader
 	stdout io.Writer
 	stderr io.Writer
+
+	// processGroup runs each command in its own process group (see WithProcessGroup).
+	processGroup bool
+}
+
+// Option configures a Runner.
+type Option func(*Runner)
+
+// WithProcessGroup runs each command in its own process group, so cancelling
+// the context stops the shell's children as well (e.g. `docker compose logs -f`
+// started by a script). Not for interactive use: a command outside the
+// terminal's foreground group cannot read from it.
+func WithProcessGroup() Option {
+	return func(r *Runner) { r.processGroup = true }
 }
 
 // New creates a Runner with the given I/O streams.
@@ -67,8 +87,24 @@ type Runner struct {
 // (e.g. "docker compose exec laravel.test php artisan tinker") work correctly.
 // Pass nil to disable stdin (appropriate for concurrent multi-target runs or
 // automated/test contexts where no terminal is available).
-func New(stdin io.Reader, stdout, stderr io.Writer) *Runner {
-	return &Runner{stdin: stdin, stdout: stdout, stderr: stderr}
+func New(stdin io.Reader, stdout, stderr io.Writer, opts ...Option) *Runner {
+	r := &Runner{stdin: stdin, stdout: stdout, stderr: stderr}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
+}
+
+// newCommand builds a shell command honouring the runner's options.
+func (r *Runner) newCommand(ctx context.Context, dir, shellCmd string, env []string) *exec.Cmd {
+	shell, flag := shellAndFlag()
+	cmd := exec.CommandContext(ctx, shell, flag, shellCmd)
+	cmd.Dir = dir
+	cmd.Env = env
+	if r.processGroup {
+		isolate(cmd)
+	}
+	return cmd
 }
 
 // NewDefault creates a Runner connected to os.Stdin, os.Stdout, and os.Stderr.
@@ -159,7 +195,7 @@ func (r *Runner) RunConcurrentWithDeps(ctx context.Context, targets []DepTarget)
 		pw := newPrefixWriter(r.stdout, &mu, dt.Target.Name, colorFor(i))
 		// Build a sub-runner that writes to the prefix writer so dep output
 		// is also prefixed with the project name.
-		sub := &Runner{stdout: pw, stderr: pw}
+		sub := &Runner{stdout: pw, stderr: pw, processGroup: r.processGroup}
 		g.Go(func() error {
 			if err := sub.RunWithDeps(gctx, dt.Target, dt.Commands); err != nil {
 				return fmt.Errorf("[%s] %w", dt.Target.Name, err)
@@ -303,9 +339,7 @@ func (r *Runner) runCommand(ctx context.Context, t Target, inR io.Reader, outW, 
 
 	// Check preconditions before running the command.
 	for _, pre := range t.Command.Preconditions {
-		preCmd := exec.CommandContext(ctx, shell, flag, pre)
-		preCmd.Dir = t.Dir
-		preCmd.Env = baseEnv
+		preCmd := r.newCommand(ctx, t.Dir, pre, baseEnv)
 		preCmd.Stdin = inR
 		// Precondition output goes to stderr so it doesn't pollute stdout.
 		preCmd.Stderr = errW
@@ -321,12 +355,10 @@ func (r *Runner) runCommand(ctx context.Context, t Target, inR io.Reader, outW, 
 			shellCmd = shellCmd + " " + strings.Join(t.ExtraArgs, " ")
 		}
 
-		cmd := exec.CommandContext(ctx, shell, flag, shellCmd)
-		cmd.Dir = t.Dir
+		cmd := r.newCommand(ctx, t.Dir, shellCmd, baseEnv)
 		cmd.Stdin = inR
 		cmd.Stdout = outW
 		cmd.Stderr = errW
-		cmd.Env = baseEnv
 
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("command %q failed: %w", shellCmd, err)

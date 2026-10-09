@@ -189,6 +189,19 @@ type Config struct {
 	// service-generated) that are removed from this context. A closer config
 	// can define an excluded command again.
 	Exclude []string `yaml:"exclude,omitempty"`
+
+	// Info lists commands whose output describes the project (shown by the
+	// web UI). Items merge by name; see InfoItem.
+	Info []InfoItem `yaml:"info,omitempty"`
+}
+
+// InfoItem is a read-only command whose output is shown as project info, e.g.
+// pending migrations. A closer config replaces an item with the same name in
+// place, or removes it when the closer item has no cmd.
+type InfoItem struct {
+	Name        string       `yaml:"name"`
+	Description string       `yaml:"description,omitempty"`
+	Cmd         StringOrList `yaml:"cmd"`
 }
 
 // MergedConfig is the result of merging multiple Config layers.
@@ -197,6 +210,7 @@ type MergedConfig struct {
 	Projects map[string]Project
 	Commands map[string]Command
 	Services map[string]Service
+	Info     []InfoItem
 
 	// excluded holds command names removed by an Exclude entry and not defined
 	// again by a closer config; service expansion skips them.

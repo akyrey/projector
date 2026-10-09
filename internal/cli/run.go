@@ -1,17 +1,13 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"path"
 	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/akyrey/projector/internal/config"
-	"github.com/akyrey/projector/internal/project"
-	"github.com/akyrey/projector/internal/runner"
+	"github.com/akyrey/projector/internal/app"
 )
 
 func newRunCmd(d *deps) *cobra.Command {
@@ -110,188 +106,22 @@ Examples:
 }
 
 // runCommand is the shared logic between `projector run` and the shorthand dispatch.
-// extraArgs are appended verbatim to the resolved shell command string.
-// dryRun prints the resolved commands without executing them.
+// Without project names the command runs in the effective working directory.
 func runCommand(d *deps, cmdName string, projectNames []string, extraArgs []string, dryRun bool) error {
-	// Single-project (or cwd) path.
-	if len(projectNames) == 0 {
-		return runInCwd(d, cmdName, extraArgs, dryRun)
-	}
-
-	return runInProjects(d, cmdName, projectNames, extraArgs, dryRun)
-}
-
-// runInCwd resolves and runs cmdName in the effective working directory.
-// If the command has depends_on entries they are executed first in topological order.
-// Cross-project deps (^proj:cmd) are resolved first, then local deps, then the command.
-// extraArgs are appended verbatim to the resolved shell command string.
-// dryRun prints the resolved commands without executing them.
-func runInCwd(d *deps, cmdName string, extraArgs []string, dryRun bool) error {
-	pwd, err := d.pwd()
-	if err != nil {
-		return fmt.Errorf("get working directory: %w", err)
-	}
-
-	merged, err := d.loader.Load(pwd)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-
-	cmd, ok := merged.Commands[cmdName]
-	if !ok {
-		return fmt.Errorf("command %q not found in current context", cmdName)
-	}
-
-	// Separate cross-project deps (^proj:cmd) from local deps.
-	crossDeps, localDeps, err := partitionDeps(cmd.DependsOn)
-	if err != nil {
-		return err
-	}
-
-	// Run cross-project deps first (sequentially per unique project).
-	if err := runCrossProjectDeps(d, crossDeps, dryRun, nil); err != nil {
-		return err
-	}
-
-	// Strip cross-project entries from the command before passing to the runner.
-	localCmd := cmd
-	localCmd.DependsOn = localDeps
-
-	followUps, err := d.onceFollowUps(pwd, cmdName, cmd)
-	if err != nil {
-		return err
-	}
-
-	t := runner.Target{
-		Name:      cmdName,
-		Dir:       pwd,
-		Command:   localCmd,
+	req := app.RunRequest{
+		Command:   cmdName,
+		Projects:  projectNames,
 		ExtraArgs: extraArgs,
 		DryRun:    dryRun,
-		FollowUps: followUps,
 	}
-
-	if len(localDeps) > 0 {
-		// Rebuild commands map with the patched version so RunWithDeps sees it.
-		localCommands := patchCommandMap(merged.Commands, cmdName, localCmd)
-		return d.runner.RunWithDeps(rootContext(), t, localCommands)
-	}
-
-	return d.runner.Run(rootContext(), t)
-}
-
-// runInProjects resolves and runs cmdName in each named project concurrently.
-// Dependencies (depends_on) for each project are resolved and executed sequentially
-// within that project before the main command runs.
-// Cross-project deps (^proj:cmd) are resolved first before any project runs.
-// extraArgs are appended verbatim to the resolved shell command string for each project.
-// dryRun prints the resolved commands without executing them.
-func runInProjects(d *deps, cmdName string, projectNames []string, extraArgs []string, dryRun bool) error {
-	type projectTarget struct {
-		target   runner.Target
-		commands map[string]config.Command
-	}
-
-	pts := make([]projectTarget, 0, len(projectNames))
-
-	// Collect all cross-project deps from all projects (deduplicated).
-	allCrossDeps := make(map[string]crossDep) // key: "proj:cmd"
-
-	for _, name := range projectNames {
-		proj, err := d.registry.Get(name)
+	if len(projectNames) == 0 {
+		pwd, err := d.pwd()
 		if err != nil {
-			if errors.Is(err, project.ErrNotFound) {
-				return fmt.Errorf("project %q is not registered; use 'projector project add' to register it", name)
-			}
-			return fmt.Errorf("get project %q: %w", name, err)
+			return fmt.Errorf("get working directory: %w", err)
 		}
-
-		// Each project resolves its own command from its own directory hierarchy.
-		merged, err := d.loader.LoadForProject(proj.Path)
-		if err != nil {
-			return fmt.Errorf("load config for project %q: %w", name, err)
-		}
-
-		cmd, ok := merged.Commands[cmdName]
-		if !ok {
-			return fmt.Errorf("command %q not found for project %q", cmdName, name)
-		}
-
-		// Partition deps for this project.
-		crossDeps, localDeps, err := partitionDeps(cmd.DependsOn)
-		if err != nil {
-			return fmt.Errorf("project %q: %w", name, err)
-		}
-		for _, cd := range crossDeps {
-			allCrossDeps[cd.projName+":"+cd.cmdName] = cd
-		}
-
-		// Use a patched command with only local deps for the runner.
-		localCmd := cmd
-		localCmd.DependsOn = localDeps
-
-		followUps, err := d.onceFollowUps(proj.Path, cmdName, cmd)
-		if err != nil {
-			return fmt.Errorf("project %q: %w", name, err)
-		}
-
-		pts = append(pts, projectTarget{
-			target: runner.Target{
-				Name:      name,
-				Dir:       proj.Path,
-				Command:   localCmd,
-				ExtraArgs: extraArgs,
-				DryRun:    dryRun,
-				FollowUps: followUps,
-			},
-			commands: patchCommandMap(merged.Commands, cmdName, localCmd),
-		})
+		req.Dir = pwd
 	}
-
-	// Run all cross-project deps first (sequentially per unique dep).
-	if len(allCrossDeps) > 0 {
-		ordered := make([]crossDep, 0, len(allCrossDeps))
-		for _, cd := range allCrossDeps {
-			ordered = append(ordered, cd)
-		}
-		sort.Slice(ordered, func(i, j int) bool {
-			ki := ordered[i].projName + ":" + ordered[i].cmdName
-			kj := ordered[j].projName + ":" + ordered[j].cmdName
-			return ki < kj
-		})
-		if err := runCrossProjectDeps(d, ordered, dryRun, nil); err != nil {
-			return err
-		}
-	}
-
-	// If any project has local depends_on, we need per-project dep resolution.
-	hasDeps := false
-	for _, pt := range pts {
-		if len(pt.target.Command.DependsOn) > 0 {
-			hasDeps = true
-			break
-		}
-	}
-
-	if !hasDeps {
-		targets := make([]runner.Target, len(pts))
-		for i, pt := range pts {
-			targets[i] = pt.target
-		}
-		return d.runner.RunConcurrent(rootContext(), targets)
-	}
-
-	// With deps: wrap each project's execution as a target that includes its
-	// full dep chain, then run all projects concurrently.
-	depsTargets := make([]runner.DepTarget, len(pts))
-	for i, pt := range pts {
-		depsTargets[i] = runner.DepTarget{
-			Target:   pt.target,
-			Commands: pt.commands,
-		}
-	}
-
-	return d.runner.RunConcurrentWithDeps(rootContext(), depsTargets)
+	return d.app.Run(rootContext(), d.runner, req)
 }
 
 // matchProjects returns the names of all registered projects that match at
@@ -326,140 +156,8 @@ func matchProjects(d *deps, patterns []string) ([]string, error) {
 	return matched, nil
 }
 
-// crossDep represents a cross-project dependency parsed from a ^proj:cmd entry.
-type crossDep struct {
-	projName string
-	cmdName  string
-}
-
-// partitionDeps separates a DependsOn list into cross-project deps (^proj:cmd)
-// and local deps (all others). Returns an error for malformed ^-entries.
-func partitionDeps(dependsOn []string) (cross []crossDep, local []string, err error) {
-	for _, dep := range dependsOn {
-		if strings.HasPrefix(dep, "^") {
-			rest := dep[1:] // strip ^
-			idx := strings.IndexByte(rest, ':')
-			if idx < 1 || idx == len(rest)-1 {
-				return nil, nil, fmt.Errorf(
-					"cross-project dep %q must be in the form ^<project>:<command>", dep)
-			}
-			cross = append(cross, crossDep{
-				projName: rest[:idx],
-				cmdName:  rest[idx+1:],
-			})
-		} else {
-			local = append(local, dep)
-		}
-	}
-	return cross, local, nil
-}
-
 // ErrCrossProjectCycle is returned when cross-project depends_on entries form a cycle.
-var ErrCrossProjectCycle = errors.New("cross-project cyclic dependency detected")
-
-// crossDepWalk tracks cross-project deps during one invocation, keyed by
-// "proj\x00cmd". inProgress holds the current recursion path (for cycle
-// detection); done holds every dep that already ran, so a dep reachable through
-// several paths (a diamond) runs only once.
-type crossDepWalk struct {
-	inProgress map[string]struct{}
-	done       map[string]struct{}
-}
-
-func newCrossDepWalk() *crossDepWalk {
-	return &crossDepWalk{
-		inProgress: make(map[string]struct{}),
-		done:       make(map[string]struct{}),
-	}
-}
-
-// runCrossProjectDeps resolves and runs each cross-project dep sequentially.
-// Each dep is run in its registered project's directory, after its own
-// cross-project deps. Pass nil for walk on the first call.
-func runCrossProjectDeps(d *deps, deps []crossDep, dryRun bool, walk *crossDepWalk) error {
-	if walk == nil {
-		walk = newCrossDepWalk()
-	}
-
-	for _, cd := range deps {
-		key := cd.projName + "\x00" + cd.cmdName
-		if _, ran := walk.done[key]; ran {
-			continue
-		}
-		if _, active := walk.inProgress[key]; active {
-			return fmt.Errorf("%w: %s:%s", ErrCrossProjectCycle, cd.projName, cd.cmdName)
-		}
-		walk.inProgress[key] = struct{}{}
-
-		proj, err := d.registry.Get(cd.projName)
-		if err != nil {
-			if errors.Is(err, project.ErrNotFound) {
-				return fmt.Errorf("cross-project dep: project %q is not registered", cd.projName)
-			}
-			return fmt.Errorf("cross-project dep: get project %q: %w", cd.projName, err)
-		}
-
-		merged, err := d.loader.LoadForProject(proj.Path)
-		if err != nil {
-			return fmt.Errorf("cross-project dep: load config for project %q: %w", cd.projName, err)
-		}
-
-		cmd, ok := merged.Commands[cd.cmdName]
-		if !ok {
-			return fmt.Errorf("cross-project dep: command %q not found in project %q", cd.cmdName, cd.projName)
-		}
-
-		// Cross-project deps themselves may have cross-project deps — recurse.
-		subCross, localDeps, err := partitionDeps(cmd.DependsOn)
-		if err != nil {
-			return fmt.Errorf("cross-project dep %q/%q: %w", cd.projName, cd.cmdName, err)
-		}
-		if err := runCrossProjectDeps(d, subCross, dryRun, walk); err != nil {
-			return err
-		}
-
-		delete(walk.inProgress, key)
-
-		localCmd := cmd
-		localCmd.DependsOn = localDeps
-
-		followUps, err := d.onceFollowUps(proj.Path, cd.cmdName, cmd)
-		if err != nil {
-			return fmt.Errorf("cross-project dep %q/%q: %w", cd.projName, cd.cmdName, err)
-		}
-
-		t := runner.Target{
-			Name:      fmt.Sprintf("%s/%s", cd.projName, cd.cmdName),
-			Dir:       proj.Path,
-			Command:   localCmd,
-			DryRun:    dryRun,
-			FollowUps: followUps,
-		}
-
-		if len(localDeps) > 0 {
-			localCommands := patchCommandMap(merged.Commands, cd.cmdName, localCmd)
-			if err := d.runner.RunWithDeps(rootContext(), t, localCommands); err != nil {
-				return fmt.Errorf("cross-project dep %q/%q: %w", cd.projName, cd.cmdName, err)
-			}
-		} else {
-			if err := d.runner.Run(rootContext(), t); err != nil {
-				return fmt.Errorf("cross-project dep %q/%q: %w", cd.projName, cd.cmdName, err)
-			}
-		}
-		walk.done[key] = struct{}{}
-	}
-	return nil
-}
-
-// patchCommandMap returns a copy of commands with the entry for key replaced by patched.
-func patchCommandMap(commands map[string]config.Command, key string, patched config.Command) map[string]config.Command {
-	out := make(map[string]config.Command, len(commands))
-	for k, v := range commands {
-		out[k] = v
-	}
-	out[key] = patched
-	return out
-}
+var ErrCrossProjectCycle = app.ErrCrossProjectCycle
 
 // completeCommandNames provides shell completion for command names.
 func completeCommandNames(d *deps) func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
