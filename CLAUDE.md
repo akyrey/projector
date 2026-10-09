@@ -415,5 +415,11 @@ Releases are cut with goreleaser. The version is injected at build time:
 -ldflags "-X main.version=<tag>"
 ```
 
+Release notes come from `CHANGELOG.md`: add a `## [vX.Y.Z] - date` section
+(Keep a Changelog groups: Added, Changed, Fixed...) and its compare link before
+tagging. The release workflow extracts it with `scripts/release-notes.sh <tag>`
+and passes it to goreleaser via `--release-notes`; a tag without a section
+fails the release.
+
 Dry-run: `goreleaser release --snapshot --clean`
-Full release: tag a commit (`git tag v1.2.3`) then `goreleaser release --clean`
+Full release: add the CHANGELOG section, tag (`git tag -a v1.2.3`) and push the tag; CI runs goreleaser. Locally: `goreleaser release --clean --release-notes=<(scripts/release-notes.sh v1.2.3)`

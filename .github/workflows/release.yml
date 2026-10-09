@@ -32,12 +32,16 @@ jobs:
           go-version: 'stable'
           check-latest: true
 
+      # Fails the release when CHANGELOG.md has no section for this tag.
+      - name: Extract release notes
+        run: ./scripts/release-notes.sh "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --clean
+          args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Required to push the Homebrew formula to akyrey/homebrew-tap.
